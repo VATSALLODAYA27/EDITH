@@ -839,3 +839,17 @@ invoke → for each model in order:  cooling down? skip  │  try it
 - **Token storage (`ponytail:`):** `localStorage` is readable by page scripts, so XSS could steal the token. The UI never renders HTML from answers, which keeps the risk low. An `httpOnly` cookie is the stronger option.
 
 **The first account on the real server should be the owner's,** since it takes over the existing data. During testing no account was created on the real database, only in temporary test databases.
+
+---
+
+## Follow-up: File Locking and Atomic Writes
+
+**Problem:** the mailbox, calendar and approval queue are JSON files that are **read, changed, then written**. With two writers at once, you get **lost updates** (both read the old version, and the second write erases the first) and **torn writes** (a crash or an overlapping write leaves half a file). *Reproduced:* 20 drafts written at the same moment **corrupted the mailbox** (`JSONDecodeError: Extra data`).
+**File:** `jsonstore.py`. **Test:** `reliability_test.py` #11, with 32 concurrent writers.
+
+- **`locked(path)`:** one read-change-write at a time per file. It's a re-entrant lock (`RLock`), so helpers can nest safely.
+- **`write_json()`:** writes a temporary file, then `os.replace()` swaps it in **atomically**. A reader sees the old file or the new one, never a mix.
+- **`with transaction() as box:`** (mailbox and calendar) = lock, load, change, save. **If the block raises, nothing is saved**, so there are no half-applied changes.
+- The lock also makes the "idempotent proposal" check correct under concurrency. Without it, two threads could both see "no duplicate yet" and both add one.
+- Also found: `apply_change` crashed on an **empty** calendar (`max()` of nothing). Fixed with `default=0`.
+- *Limits (`ponytail:`):* these are in-process locks, so they work for one server process. Several processes need an OS file lock (e.g. `portalocker`), or better, **a real database**, where transactions do both jobs.
