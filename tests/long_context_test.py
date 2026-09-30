@@ -1,6 +1,6 @@
 """Long documents (map-reduce) and long conversations (rolling summary). No LLM calls: scripted fakes.
 
-Run:  python long_context_test.py
+Run:  python -m tests.long_context_test
 """
 import os
 import tempfile

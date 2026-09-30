@@ -1,6 +1,6 @@
 """Phase 8 tests: per-run state reset, short-term memory (threads), persistence, long-term memory (profile).
 
-Tests 1-2 use no LLM. Tests 3-5 call real LLMs.   Run:  python memory_test.py
+Tests 1-2 use no LLM. Tests 3-5 call real LLMs.   Run:  python -m tests.memory_test
 """
 import os
 import tempfile

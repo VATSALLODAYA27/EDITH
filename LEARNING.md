@@ -431,7 +431,7 @@ task → LLM ──"call read_document('survey_report.pdf')"──► our code r
 ## Phase 4: Agent-to-Agent Workflows
 
 **Problem:** real tasks are **chains**, where one agent's output is the next agent's input ("read this report, then make slides"), and some parts are **independent** and could run at the same time.
-**Files:** `orchestrator.py` (reworked) and `workflows_test.py`. **Test:** `python workflows_test.py`.
+**Files:** `orchestrator.py` (reworked) and `tests/workflows_test.py`. **Test:** `python -m tests.workflows_test`.
 
 ```
 turn 1:  orchestrator → [document_agent]                        (sequential: PPT must wait)
@@ -477,7 +477,7 @@ parallel: orchestrator → [rag_agent + research_agent]  (same turn, via Send) �
    - **Lesson: don't rely on the LLM for plumbing.** If `inputs` is empty, Python attaches all earlier results. The prompt makes good behaviour likely; the code makes it certain.
 3. **My first tests passed while the system looped.** They only checked the *first* time an agent ran. Workflow tests now also check that each agent runs **only once**.
 
-**Test results (`python workflows_test.py`), all 6 passing:**
+**Test results (`python -m tests.workflows_test`), all 6 passing:**
 
 | Workflow | Turns | Checked |
 |---|---|---|
@@ -496,8 +496,8 @@ The 12 routing tests still pass. One run crashed when **all four models failed a
 ## Phase 5: Tools
 
 **Problem:** we built 27 tools one agent at a time. Now we look at them **as a system**: how a call really works, what the LLM sees, and whether they're consistent, safe, and testable **without an LLM**.
-**Files:** `agents/tool_agent.py` (the loop), `tool_loop_test.py` (the mechanics test, no API calls), `tools_catalog.py` (generated catalogue).
-**Tests:** `python tool_loop_test.py` · `python tools_catalog.py` · `python tools_catalog.py analyze_sheet` (shows one tool's full schema)
+**Files:** `agents/tool_agent.py` (the loop), `tests/tool_loop_test.py` (the mechanics test, no API calls), `tools_catalog.py` (generated catalogue).
+**Tests:** `python -m tests.tool_loop_test` · `python tools_catalog.py` · `python tools_catalog.py analyze_sheet` (shows one tool's full schema)
 
 ```
 Agent (LLM) ─ tool call {name, args, id} ─► run_tool_agent: clean args → run_tool: validate (Pydantic) → function
@@ -508,7 +508,7 @@ Agent (LLM) ─ tool call {name, args, id} ─► run_tool_agent: clean args →
 
 **What the LLM sees:** `@tool` turns **name + docstring + type hints** into a JSON schema (`tools_catalog.py analyze_sheet` prints it). The docstring becomes `description`, and defaults make arguments optional. **Writing tool docstrings is writing prompts.**
 
-**What the loop guarantees** (each point is tested in `tool_loop_test.py` with a scripted fake LLM):
+**What the loop guarantees** (each point is tested in `tests/tool_loop_test.py` with a scripted fake LLM):
 | # | Situation | Behaviour |
 |---|---|---|
 | 1 | Normal call | Result goes back as a `ToolMessage` linked to the call `id` |
@@ -567,8 +567,8 @@ Human-only functions (**not** tools): `send_draft`, `apply_change`. Phase 9 conn
 ## Phase 6: FastAPI Backend
 
 **Problem:** the Orchestrator only ran through `python orchestrator.py`. A UI, an app or another service needs a stable, documented **HTTP interface**.
-**Files:** `api.py` and `api_test.py`, plus `.claude/launch.json` to start the server.
-**Run:** `.venv/Scripts/python -m uvicorn api:app --port 8000`, then open `http://127.0.0.1:8000/docs`. **Test:** `python api_test.py`.
+**Files:** `api.py` and `tests/api_test.py`, plus `.claude/launch.json` to start the server.
+**Run:** `.venv/Scripts/python -m uvicorn api:app --port 8000`, then open `http://127.0.0.1:8000/docs`. **Test:** `python -m tests.api_test`.
 
 ```
 React / curl ──HTTP──► FastAPI: validate (Pydantic) → auth (X-API-Key) → graph.invoke / graph.stream ──► agents
@@ -670,8 +670,8 @@ textarea → Launch → fetch POST /tasks/stream → read the stream → parse S
 ## Phase 8: Memory, State & Persistence
 
 **Problem:** every request started from zero. "Add a slide to **that deck**" meant nothing, email drafts were signed "[Your Name]", and a server restart lost everything.
-**Files:** `memory.py` (checkpointer, profile, thread index) and `memory_test.py`. Also changes to `orchestrator.py`, `agents/tool_agent.py`, `api.py` and the UI.
-**Test:** `python memory_test.py`
+**Files:** `memory.py` (checkpointer, profile, thread index) and `tests/memory_test.py`. Also changes to `orchestrator.py`, `agents/tool_agent.py`, `api.py` and the UI.
+**Test:** `python -m tests.memory_test`
 
 | Kind | What | Lifetime | How we implemented it |
 |---|---|---|---|
@@ -723,7 +723,7 @@ textarea → Launch → fetch POST /tasks/stream → read the stream → parse S
 
 **Problem:** agents drafted emails and proposed calendar changes, but nothing ever *did* them. And `delete_slide` deleted immediately, with no check at all.
 **Why a human must approve:** an LLM can misunderstand the request, pick the wrong recipient, or be manipulated by prompt injection (e.g. the phishing email from Phase 3.6). Sending, cancelling and deleting **can't be undone**, so a human confirms the **exact** action first.
-**Files:** `approvals.py` (all risky actions in one place), the `approval` node in `orchestrator.py`, `POST /tasks/{thread_id}/resume` in `api.py`, the approval panel in the UI, and `approval_test.py`.
+**Files:** `approvals.py` (all risky actions in one place), the `approval` node in `orchestrator.py`, `POST /tasks/{thread_id}/resume` in `api.py`, the approval panel in the UI, and `tests/approval_test.py`.
 
 ```
 agents create PENDING actions (draft, proposed change, requested deletion)
@@ -757,7 +757,7 @@ agents create PENDING actions (draft, proposed change, requested deletion)
 
 **More Phase 9 findings (from testing under heavy rate-limiting):**
 3. **The router re-called agents** to "confirm" or "retrieve" their own pending drafts, even after a prompt rule saying not to. Now enforced in code: **each agent runs at most once per request** (a `ponytail:` note covers the rare case where a second call would be wanted). That's the third time in this project a prompt rule wasn't enough: **plumbing belongs in code.**
-4. **Cross-provider fallback inside a tool loop broke Gemini.** Groq made a tool call, Groq then ran out of quota, and Gemini received a history containing Groq's call and rejected it: `Function call is missing a thought_signature`. `langchain-google-genai` adds a placeholder signature for other providers' calls, but **only when the model name contains "gemini-3"**, and our `-latest` aliases didn't. **Fix:** versioned names (`gemini-3.8-flash`, `gemini-3.5-flash-lite`), plus an offline regression test (`tool_loop_test.py` 8b). **Lesson:** pin model versions. Aliases can silently change models *and* hide model-specific handling.
+4. **Cross-provider fallback inside a tool loop broke Gemini.** Groq made a tool call, Groq then ran out of quota, and Gemini received a history containing Groq's call and rejected it: `Function call is missing a thought_signature`. `langchain-google-genai` adds a placeholder signature for other providers' calls, but **only when the model name contains "gemini-3"**, and our `-latest` aliases didn't. **Fix:** versioned names (`gemini-3.8-flash`, `gemini-3.5-flash-lite`), plus an offline regression test (`tests/tool_loop_test.py` 8b). **Lesson:** pin model versions. Aliases can silently change models *and* hide model-specific handling.
 
 **Cleanup after Phase 9:** deleted `__pycache__/`, `frontend/dist/`, 11 test-generated files in `workspace/` (only the sample inputs `sales.xlsx` and `survey_report.pdf` remain), and the runtime `mailbox.json` / `calendar.json` (rebuilt from seeds). Blanked the key values in `.env.example`. **Tests were kept** as the safety net that caught most of the bugs above.
 
@@ -766,8 +766,8 @@ agents create PENDING actions (draft, proposed change, requested deletion)
 ## Phase 10: Reliability
 
 **Problem:** all the failures we saw earlier in the project. Every call wasted a round trip on a model already out of daily quota. A brief outage everywhere killed the request. Only the first model's error was visible. One crashing agent killed the whole request. There was no record of what ran. An agent could claim to have created a file it hadn't.
-**Files:** `llm.py` (rewritten), `tracing.py`, `trace_view.py`, `reliability_test.py`, plus changes to `orchestrator.py` and `agents/tool_agent.py`.
-**Tests:** `python reliability_test.py` has **10 checks and makes no API calls**: fake models raise scripted errors, and a fake router and agent drive the real graph.
+**Files:** `llm.py` (rewritten), `tracing.py`, `trace_view.py`, `tests/reliability_test.py`, plus changes to `orchestrator.py` and `agents/tool_agent.py`.
+**Tests:** `python -m tests.reliability_test` has **10 checks and makes no API calls**: fake models raise scripted errors, and a fake router and agent drive the real graph.
 
 ### 1. Resilient LLM (replaces `with_fallbacks`)
 ```
@@ -816,8 +816,8 @@ invoke → for each model in order:  cooling down? skip  │  try it
 ## Follow-up: User Accounts (multi-user)
 
 **Problem:** everyone shared everything, so user B could read A's conversations or **approve sending A's email**.
-**Files:** `auth.py` (accounts and sessions), `userdata.py` (current user and per-user paths), `auth_test.py`, plus changes to `memory.py`, `api.py`, the agents and the UI (login screen).
-**Test:** `python auth_test.py` has 7 checks, with no LLM calls.
+**Files:** `auth.py` (accounts and sessions), `userdata.py` (current user and per-user paths), `tests/auth_test.py`, plus changes to `memory.py`, `api.py`, the agents and the UI (login screen).
+**Test:** `python -m tests.auth_test` has 7 checks, with no LLM calls.
 
 | Piece | How | Why / alternatives |
 |---|---|---|
@@ -832,7 +832,7 @@ invoke → for each model in order:  cooling down? skip  │  try it
 
 **Streaming plus context variables:** a streaming response runs *later*, step by step, possibly on different threads, so the user can't simply be "set" around it. `traced_stream(..., user)` puts the user into the copied context that every graph step runs in, and the snapshots run explicitly `as_user`. This is the same technique as the run id for tracing.
 
-**Tests no longer touch real data:** `use_temp_data()` sends every per-user file to a temporary folder (`APP_DATA_DIR`). **Before this, the tests ran as the real user `local`,** so `approval_test.py` could reset your real mailbox and the agent tests created files in your real `workspace/`. That's where the clutter cleaned up after Phase 9 came from.
+**Tests no longer touch real data:** `use_temp_data()` sends every per-user file to a temporary folder (`APP_DATA_DIR`). **Before this, the tests ran as the real user `local`,** so `tests/approval_test.py` could reset your real mailbox and the agent tests created files in your real `workspace/`. That's where the clutter cleaned up after Phase 9 came from.
 
 **UI:** a login / create-account screen, and the token is attached to every call. A 401 on a normal call returns you to the login screen. Downloads use `fetch` with the token, then a blob, because a plain link can't send the header.
 - **A bug found in the browser:** a wrong login showed "Please log in." because every 401 was treated as "session expired". A 401 from `/auth/login` means wrong credentials, so its message is now shown as-is.
@@ -845,7 +845,7 @@ invoke → for each model in order:  cooling down? skip  │  try it
 ## Follow-up: File Locking and Atomic Writes
 
 **Problem:** the mailbox, calendar and approval queue are JSON files that are **read, changed, then written**. With two writers at once, you get **lost updates** (both read the old version, and the second write erases the first) and **torn writes** (a crash or an overlapping write leaves half a file). *Reproduced:* 20 drafts written at the same moment **corrupted the mailbox** (`JSONDecodeError: Extra data`).
-**File:** `jsonstore.py`. **Test:** `reliability_test.py` #11, with 32 concurrent writers.
+**File:** `jsonstore.py`. **Test:** `tests/reliability_test.py` #11, with 32 concurrent writers.
 
 - **`locked(path)`:** one read-change-write at a time per file. It's a re-entrant lock (`RLock`), so helpers can nest safely.
 - **`write_json()`:** writes a temporary file, then `os.replace()` swaps it in **atomically**. A reader sees the old file or the new one, never a mix.
@@ -876,5 +876,35 @@ invoke → for each model in order:  cooling down? skip  │  try it
 - **What's editable:** `approvals.EDITABLE = {"email": ("subject", "body")}`. **Never the recipient:** changing `to` would bypass what the agent proposed and what you reviewed. It's refused at two layers, the API model (`Literal["subject", "body"]`, so 422) and `execute()` (`ValueError`). Edits on non-email actions → 422.
 - **Old clients keep working:** plain `"approve"` / `"reject"` strings are still accepted.
 - **UI:** email cards get **✎ Edit**, which turns the subject and body into fields and marks the recipient as locked. Only fields that actually changed are sent as edits.
-- **Tests:** `approval_test.py` 1b and 1c drive the **real graph and API with a scripted router** that creates a draft as a side effect, so the real approval node pauses without any LLM. They check that the edited text is what gets sent and that editing the recipient is refused.
+- **Tests:** `tests/approval_test.py` 1b and 1c drive the **real graph and API with a scripted router** that creates a draft as a side effect, so the real approval node pauses without any LLM. They check that the edited text is what gets sent and that editing the recipient is refused.
 - **Browser check, without touching real data:** the API on port 8000 was temporarily swapped for a **throwaway instance** (temporary `MEMORY_DB`, `APP_DATA_DIR` and `TRACE_LOG`). A demo account was created there, "[Your Name]" was edited into a real sign-off and approved, and the sent email in that instance's data contained exactly the edited body.
+
+---
+
+## Follow-up: Long Documents and Long Conversations
+
+Both are the same underlying problem: **more text than fits in the context window**, or more than the rate limits allow.
+
+### Long documents: map-reduce summarization
+`read_document` shows only the first 20,000 characters, so a summary of a long report **silently ignored most of it**. It now says "truncated … use summarize_long_document".
+```
+summarize_long_document(file, focus)
+  → split into ≤10k-character parts at paragraph boundaries
+  → MAP:    each part → ≤8 bullets (keep numbers, names, dates exactly)
+  → REDUCE: combine the part-summaries into one structured summary
+```
+- **Bounded cost:** at most 15 parts (~150k characters), so N map calls plus 1 reduce call. Longer files are refused with a clear error.
+- *Alternatives:*
+  - **RAG over the document:** better for *specific questions*, worse for "summarize everything".
+  - **A long-context model** (1M tokens): simplest, but costly and blocked by per-minute token limits.
+  - **"Refine"** (update a running summary part by part): keeps more flow between parts, but is strictly sequential and slower.
+- **Test (no LLM):** a 60k-character file with the key fact on the last page. `read_document` misses it, while map-reduce (7 parts, 8 calls) finds it.
+
+### Long conversations: rolling summary
+The router only saw the last 12 messages, so older context vanished silently.
+- New `compact` node after `finalize`: when a thread has **more than 16 messages**, everything but the **last 6** is folded into `state["summary"]` by the LLM, then removed with **`RemoveMessage(id=…)`**, which `add_messages` understands. The saved checkpoint shrinks too.
+- The router gets the summary **inside its one system message** (a second system message isn't accepted by every provider).
+- **If no LLM is available, nothing is removed**; it retries after the next request.
+- The UI shows it as "🗜 Older turns (summarized)" when a mission is reopened.
+- **A bug avoided:** the API stream treated any unknown node as an agent (`out["agent_results"][node]`), so `compact` would have caused a `KeyError`. It's now handled explicitly.
+- *Alternatives:* just trim (cheap, but forgets), or a summary per N turns (more LLM calls), or vector memory of past turns (retrieve relevant old turns on demand).

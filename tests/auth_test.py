@@ -1,6 +1,6 @@
 """User accounts: registration, login, sessions, and ISOLATION between users. No LLM calls.
 
-Run:  python auth_test.py
+Run:  python -m tests.auth_test
 """
 import os
 import tempfile

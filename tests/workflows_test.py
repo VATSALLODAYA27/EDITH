@@ -1,7 +1,7 @@
 """Phase 4 tests: multi-agent workflows (sequential chains + parallel steps) through the Orchestrator.
     
 Each test checks ORDER (which turn each agent ran in), DATA FLOW (inputs) and the resulting STATE
-(files, drafts), not just the answer text.   Run:  python workflows_test.py
+(files, drafts), not just the answer text.   Run:  python -m tests.workflows_test
 """
 import os
 import tempfile

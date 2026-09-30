@@ -1,6 +1,6 @@
 """Phase 9 tests: human approval (interrupt -> decide -> resume) for emails, calendar changes and slide deletions.
 
-Section 1 uses no LLM. Sections 2-3 call real LLMs.   Run:  python approval_test.py
+Section 1 uses no LLM. Sections 2-3 call real LLMs.   Run:  python -m tests.approval_test
 """
 import os
 import tempfile

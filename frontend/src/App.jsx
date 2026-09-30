@@ -351,6 +351,7 @@ function MissionControl({ username, onLoggedOut }) {
   const [files, setFiles] = useState([]); // workspace files this run created/changed (from the "files" event)
   const [threadId, setThreadId] = useState(null); // the conversation; follow-ups reuse it (short-term memory)
   const [convo, setConvo] = useState([]); // earlier turns of this conversation: [{q, a}]
+  const [summary, setSummary] = useState(""); // even older turns, compacted by the server into a summary
   const [drawer, setDrawer] = useState(null); // "history" | "profile" | null
   const [pending, setPending] = useState([]); // actions the paused run is waiting on (Phase 9)
   const lastQuestion = useRef("");
@@ -358,13 +359,13 @@ function MissionControl({ username, onLoggedOut }) {
 
   function resetRun() { setPhase("idle"); setTurn(0); setNodes({}); setLog([]); setFiles([]); setPending([]); }
 
-  function newMission() { resetRun(); setThreadId(null); setConvo([]); setMessage(""); setDrawer(null); }
+  function newMission() { resetRun(); setThreadId(null); setConvo([]); setSummary(""); setMessage(""); setDrawer(null); }
 
   async function openThread(id) {
-    const { messages, pending_approval } = await getThread(id);
+    const { messages, pending_approval, summary: older } = await getThread(id);
     const pairs = [];
     messages.forEach((m) => (m.role === "user" ? pairs.push({ q: m.content, a: "" }) : pairs.length && (pairs.at(-1).a = m.content)));
-    resetRun(); setThreadId(id); setConvo(pairs); setMessage(""); setDrawer(null);
+    resetRun(); setThreadId(id); setConvo(pairs); setSummary(older || ""); setMessage(""); setDrawer(null);
     if (pending_approval?.length) { setPending(pending_approval); setPhase("awaiting"); } // paused earlier: still waiting
   }
 
@@ -478,9 +479,15 @@ function MissionControl({ username, onLoggedOut }) {
         </section>
       )}
 
-      {convo.length > 0 && (
+      {(convo.length > 0 || summary) && (
         <section className="panel convo">
           <p className="eyebrow">EARLIER IN THIS MISSION</p>
+          {summary && (
+            <details className="turn">
+              <summary>🗜 Older turns (summarized to save space)</summary>
+              <div className="result"><Rich text={summary} /></div>
+            </details>
+          )}
           {convo.map((t, i) => (
             <details key={i} className="turn">
               <summary>🧑 {t.q}</summary>

@@ -1,6 +1,6 @@
 """Phase 6 tests: the HTTP layer (validation, auth, errors, streaming) via FastAPI's TestClient (no server needed).
 
-Only tests 5 and 6 call real LLMs.   Run:  python api_test.py
+Only tests 5 and 6 call real LLMs.   Run:  python -m tests.api_test
 """
 import os
 import tempfile

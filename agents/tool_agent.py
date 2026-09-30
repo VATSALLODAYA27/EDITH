@@ -3,7 +3,7 @@
     LLM thinks -> asks for tool call(s) -> OUR code runs them -> results go back to the LLM -> repeat
     ... until the LLM answers without asking for a tool.
 
-Test without any API calls:  python tool_loop_test.py
+Test without any API calls:  python -m tests.tool_loop_test
 """
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 

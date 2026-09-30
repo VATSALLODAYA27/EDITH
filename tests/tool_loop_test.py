@@ -1,7 +1,7 @@
 """Phase 5 test: Agent -> Tool -> Result, checked WITHOUT any LLM/API calls.
 
 A ScriptedLLM replays pre-written AI replies (incl. tool calls) and records what the loop sends back,
-so we can test the mechanics exactly: free, instant and deterministic.   Run:  python tool_loop_test.py
+so we can test the mechanics exactly: free, instant and deterministic.   Run:  python -m tests.tool_loop_test
 """
 import sys
 

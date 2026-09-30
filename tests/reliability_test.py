@@ -1,7 +1,7 @@
 """Phase 10 tests: cooldowns/backoff, agent isolation, output verification, limits, recovery, tracing.
 
 Fully deterministic: fake models raise scripted errors, and a fake router/agent drive the real graph.
-No API calls, no quota.   Run:  python reliability_test.py
+No API calls, no quota.   Run:  python -m tests.reliability_test
 """
 import os
 import tempfile
