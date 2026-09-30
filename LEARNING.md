@@ -933,3 +933,4 @@ The router only saw the last 12 messages, so older context vanished silently.
   - `matplotlib` images for charts: more chart types, but pictures can't be edited in PowerPoint.
   - Aspose.Slides (paid), Google Slides API (OAuth), or pptxgenjs (JavaScript).
   - Images per slide (e.g. from a stock-photo API) are a possible next step. They'd need a key and a download size limit.
+- **Bug seen in the app:** asking again for `survey_deck.pptx` hit "already exists", so the agent **edited the old plain deck** instead, and the result looked unchanged. **Fix in code:** `create_presentation` never overwrites, but now saves as `survey_deck_2.pptx` (`_3`...) and reports the name it used. The prompt also asks for at least 2 layouts, and for key numbers as stats or charts.

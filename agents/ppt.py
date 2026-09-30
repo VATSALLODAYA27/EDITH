@@ -447,12 +447,16 @@ def read_presentation(filename: str) -> str:
 def create_presentation(filename: str, title: str, slides: list[Slide], subtitle: str = "",
                         theme: Theme = "ocean") -> str:
     """Create a NEW designed 16:9 .pptx: a title slide (title + subtitle) followed by one slide per item in `slides`.
-    Pick each slide's `layout` to fit its content, and a colour `theme`. Refuses to overwrite an existing file."""
+    Pick each slide's `layout` to fit its content, and a colour `theme`. Never overwrites: if the name is taken,
+    the deck is saved as name_2.pptx (name_3 ...) and the result says which name was used."""
     path = _safe_path(filename)
     if path.suffix.lower() != ".pptx":
         raise ValueError("filename must end with .pptx")
-    if path.exists():  # overwriting needs human approval -> Phase 9
-        raise FileExistsError(f"'{filename}' already exists. Pick a new name or edit it with the other tools.")
+    requested = path.name
+    n = 1
+    while path.exists():  # overwriting needs human approval (Phase 9), so pick the next free name instead.
+        n += 1            # Before: the agent got "already exists" and EDITED the old plain deck instead.
+        path = path.with_name(f"{path.stem.rsplit('_', 1)[0] if n > 2 else path.stem}_{n}.pptx")
     for spec in slides:
         _check(spec)
     prs = Presentation()
@@ -462,7 +466,8 @@ def create_presentation(filename: str, title: str, slides: list[Slide], subtitle
     for spec in slides:
         _render(prs, spec)
     prs.save(path)
-    return f"Created {filename} with {len(prs.slides)} slides (theme {theme})"
+    note = f" ('{requested}' already existed, so it was saved under a new name)" if path.name != requested else ""
+    return f"Created {path.name} with {len(prs.slides)} slides (theme {theme}){note}"
 
 
 @tool
@@ -556,12 +561,16 @@ Design (the tools draw everything; you choose the layout per slide and a theme p
   numbers/KPIs -> "stats" (1-{MAX_STATS} big numbers) · data over categories or time -> "chart" (bar / line / pie,
   with up to 3 takeaway bullets beside it) · comparisons (before/after, pros/cons) -> "two_column" ·
   one key message -> "quote" · decks of 7+ slides -> "section" dividers · everything else -> "bullets".
+- Be visual: a deck with 3+ content slides uses at least 2 different layouts, and when the content has key
+  numbers (percentages, totals, counts) show them as "stats" or a "chart", not only inside bullets.
 - Themes: ocean (default, corporate), forest (calm, sustainability, HR), sunset (bold, marketing), slate (minimal, tech).
 - Good slides: a short title (under ~50 characters), at most {MAX_BULLETS} concise bullets, one idea per slide.
   "Label: detail" bullets show the label in bold. Put extra detail in speaker notes.
 Rules:
 - Use only facts given in the task; don't invent numbers, names or dates. Chart values must come from the given data.
   Don't add units or currency the data doesn't have (no "M", "$" or "%" unless given).
+- When asked to CREATE a deck, always use create_presentation (even if a file with that name exists: it picks a
+  free name). Only edit an existing deck when the user asks to change that deck. Report the file name the tool returns.
 - Before editing an existing file, call read_presentation to see its slides and their numbers.
 - Slide numbers change after adding/deleting slides: re-read the presentation if you need them again.
 - delete_slide only REQUESTS a deletion; the user approves it afterwards. Report it as requested, not as done.
