@@ -8,6 +8,7 @@ from pptx import Presentation
 from pypdf import PdfReader
 
 from agents.document import _safe_path
+from agents.ppt import slide_text
 from userdata import workspace_dir
 
 MAX_ROWS, MAX_COLS, MAX_TEXT = 30, 12, 5_000
@@ -36,11 +37,11 @@ def preview(filename: str) -> dict:
     if kind == "pptx":
         slides = []
         for n, s in enumerate(Presentation(path).slides, start=1):
-            body = s.placeholders[1].text_frame if len(s.placeholders) > 1 else None
+            title, lines = slide_text(s)  # designed slides keep text in named shapes, charts become text
             slides.append({
                 "number": n,
-                "title": s.shapes.title.text if s.shapes.title is not None else "",
-                "bullets": [p.text for p in body.paragraphs if p.text] if body else [],
+                "title": title,
+                "bullets": lines,
                 "notes": s.notes_slide.notes_text_frame.text if s.has_notes_slide else "",
             })
         return {"type": "pptx", "slides": slides}

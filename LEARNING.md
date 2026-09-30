@@ -908,3 +908,28 @@ The router only saw the last 12 messages, so older context vanished silently.
 - The UI shows it as "🗜 Older turns (summarized)" when a mission is reopened.
 - **A bug avoided:** the API stream treated any unknown node as an agent (`out["agent_results"][node]`), so `compact` would have caused a `KeyError`. It's now handled explicitly.
 - *Alternatives:* just trim (cheap, but forgets), or a summary per N turns (more LLM calls), or vector memory of past turns (retrieve relevant old turns on demand).
+
+---
+
+## Follow-up: Designed Presentations
+
+**Problem:** decks were plain: the default 4:3 white template with only title and bullets on every slide.
+**Solution:** keep the same idea (the LLM writes **structured content**, Python draws), but Python now draws a **designed** slide. No new library was needed: python-pptx can already do shapes, colours, native charts and fields. The design lives in our code.
+
+| Piece | What it does |
+|---|---|
+| **16:9 + themes** | `ocean`, `forest`, `sunset`, `slate`, each with dark, primary, accent, text and soft colours. The theme is saved in the file (`core_properties.category`), so slides added later match the deck. |
+| **6 layouts** (`Slide.layout`) | `bullets`, `two_column` (compare), `stats` (1–4 big-number cards), `chart` (+ takeaway bullets), `quote`, `section` (divider) |
+| **Native charts** | bar, line and pie via `add_chart(CategoryChartData)`, so they stay **editable in PowerPoint**. Bars start at 0, and the chart title is hidden (the slide title says it). |
+| **Details** | Themed square bullets (XML `a:buChar`), "Label: detail" in bold, a **live slide-number field** (`a:fld type="slidenum"`, stays correct after moves or deletes), a deck-title footer, font size chosen by amount of text |
+| **Still readable** | Every slide keeps a real title placeholder (Title Only layout), and content shapes are named (`body`, `left`, `stat`, `chart`, `deco`...). `slide_text()` reads any slide (charts become `[chart: Revenue: North 120, ...]`), and is shared by `read_presentation` and the UI preview. |
+
+- **The LLM picks the layout,** guided by the prompt: numbers become `stats` or `chart`, comparisons become `two_column`. The tools still enforce limits (≤6 bullets, ≤4 stats, categories must match values).
+- **Old decks still work:** placeholder-based slides are read and updated as before.
+- **Checked visually, not assumed:** decks were exported to PNG through PowerPoint (`SaveAs(..., 18)`), which exposed labels like "88." (number format fixed to `General`) and a bar axis starting at 65 (made differences look huge, now starts at 0).
+- **Seen in testing:** the agent wrote "120M" when the data had no unit, so a prompt rule now says don't add units. It's the same lesson as the Excel agent's "$".
+- *Alternatives:*
+  - A designer-made `.pptx` **template** file loaded with `Presentation("template.pptx")`: the best look, but it needs a designed file and its layouts mapped.
+  - `matplotlib` images for charts: more chart types, but pictures can't be edited in PowerPoint.
+  - Aspose.Slides (paid), Google Slides API (OAuth), or pptxgenjs (JavaScript).
+  - Images per slide (e.g. from a stock-photo API) are a possible next step. They'd need a key and a download size limit.
