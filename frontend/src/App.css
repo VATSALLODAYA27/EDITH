@@ -104,7 +104,18 @@ button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .entry.pending { color: var(--cyan); border-left-color: var(--cyan); }
 .entry em { color: var(--cyan); font-style: normal; }
 summary { cursor: pointer; }
-.result { white-space: pre-wrap; margin-top: 8px; color: #cfd7f3; font-size: 14px; line-height: 1.6; }
+.result { margin-top: 8px; color: #cfd7f3; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+/* markdown answers */
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol { margin: 6px 0; } .md ul, .md ol { padding-left: 20px; }
+.md h1, .md h2, .md h3, .md h4 { margin: 12px 0 6px; font-size: 15px; color: var(--cyan); }
+.md a { color: var(--cyan); }
+.md code { font: 12px var(--mono); background: #ffffff12; padding: 1px 5px; border-radius: 4px; }
+.md pre { background: #0006; padding: 10px; border-radius: 8px; overflow-x: auto; }
+.md blockquote { margin: 6px 0; padding-left: 12px; border-left: 3px solid var(--panel-edge); color: var(--muted); }
+.md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--panel-edge); padding: 5px 9px; text-align: left; }
+.md th { background: #5eead41a; color: var(--cyan); }
 .final { margin-top: 16px; padding: 16px; border-radius: 14px; border: 1px solid var(--green);
          background: linear-gradient(180deg, #a3e63512, transparent); animation: rise 0.4s ease-out; }
 .final .result { color: var(--text); font-size: 15px; margin-top: 0; }
@@ -150,6 +161,12 @@ summary { cursor: pointer; }
 .email-preview { margin-top: 10px; max-width: none; padding: 14px 18px; }
 .email-preview hr { border: 0; border-top: 1px solid #cbd5e1; margin: 8px 0; }
 .email-body { white-space: pre-wrap; }
+.choice button.on.edit { background: var(--amber); color: #1a1204; border-color: var(--amber); }
+.email-edit label { display: grid; gap: 4px; margin-top: 10px; }
+.email-edit input, .email-edit textarea { font: 14px/1.5 var(--font); color: #0f172a; background: #fff; border: 1px solid #cbd5e1;
+                                          border-radius: 8px; padding: 8px 10px; resize: vertical; }
+.email-edit input:focus, .email-edit textarea:focus { outline: 2px solid var(--amber); }
+.locked { color: #64748b; font-size: 12px; }
 .approval-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: 14px; }
 .entry.outcome { border-left-color: var(--amber); }
 

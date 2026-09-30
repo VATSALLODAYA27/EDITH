@@ -61,11 +61,20 @@ def pending_ids() -> list[str]:
     return [a["id"] for a in list_pending()]
 
 
-def execute(action_id: str) -> str:
-    """Carry out ONE approved action."""
+EDITABLE = {"email": ("subject", "body")}  # what a human may change before approving (never the recipient)
+
+
+def execute(action_id: str, edits: dict | None = None) -> str:
+    """Carry out ONE approved action, optionally with the human's edits applied first."""
     kind, local_id = action_id.split(":", 1)
+    if edits and set(edits) - set(EDITABLE.get(kind, ())):
+        raise ValueError(f"Can't edit {sorted(set(edits) - set(EDITABLE.get(kind, ())))} of a {kind} action")
     if kind == "email":
-        return mail.send_draft(local_id)
+        if edits:
+            with mail.transaction() as box:  # apply the edits to the draft, then send exactly that
+                draft = next(d for d in box["drafts"] if d["id"] == local_id)
+                draft.update({k: v.strip() for k, v in edits.items() if v and v.strip()})
+        return mail.send_draft(local_id) + (" (edited by you)" if edits else "")
     if kind == "calendar":
         return calendar_agent.apply_change(local_id)
     if kind == "file":

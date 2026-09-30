@@ -59,6 +59,56 @@ assert approvals.pending_ids() == ["email:d3", "calendar:c3"], approvals.pending
 print("1. approvals module (ids, execute, discard) OK")
 fresh()
 
+# --- 1b. Edit before approve, through the REAL graph + API, no LLM: a scripted router drafts an email as a side
+#         effect and finishes; the real approval node pauses on it; we approve WITH edits.
+import orchestrator  # noqa: E402
+from orchestrator import Route  # noqa: E402
+
+
+class DraftingRouter:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, *a, **k):
+        self.calls += 1
+        if self.calls == 1:
+            mail.draft_email.invoke({"to": "john.miller@nimbuslabs.com", "subject": "Re: sync", "body": "rough draft"})
+        return Route(steps=[], reason="done")
+
+
+real_router = orchestrator.router
+orchestrator.router = DraftingRouter()
+r = run("Reply to John")
+action = r["__interrupt__"][0].value["actions"][0]
+done = resume(r["thread_id"], {action["id"]: {"decision": "approve", "edits": {"body": "Polished by a human."}}})
+sent = mail._load()["sent"][0]
+assert sent["body"] == "Polished by a human." and sent["to"] == "john.miller@nimbuslabs.com", sent
+assert "(edited by you)" in done["final_answer"], done["final_answer"]
+try:
+    approvals.execute("email:d9", {"to": "attacker@evil.com"})
+    raise AssertionError("the recipient must not be editable")
+except ValueError:
+    pass
+print("1b. edit before approve (graph) OK")
+fresh()
+
+# API validation of edits (still the scripted router, no LLM)
+_api_client = TestClient(api.app)
+_api_client.post("/auth/register", json={"username": "editor", "password": "test-pass-1"})
+_api_client.headers["Authorization"] = "Bearer " + _api_client.post(
+    "/auth/login", json={"username": "editor", "password": "test-pass-1"}).json()["token"]
+orchestrator.router = DraftingRouter()
+text = _api_client.post("/tasks/stream", json={"message": "Reply to John"}).text
+tid = json.loads(text.split("\n")[1].removeprefix("data: "))["thread_id"]
+aid = json.loads(text.strip().split("\n")[-1].removeprefix("data: "))["actions"][0]["id"]
+bad = {aid: {"decision": "approve", "edits": {"to": "attacker@evil.com"}}}
+assert _api_client.post(f"/tasks/{tid}/resume", json={"decisions": bad}).status_code == 422  # recipient locked
+ok = _api_client.post(f"/tasks/{tid}/resume", json={"decisions": {aid: {"decision": "approve", "edits": {"subject": "Final"}}}})
+assert "(edited by you)" in ok.text and mail._load()["sent"][0]["subject"] == "Final", ok.text
+orchestrator.router = real_router
+print("1c. edit validation via API OK")
+fresh()
+
 # --- 2. Through the graph: the run PAUSES; nothing happens until the human decides ---
 r = run("Reply to John's email saying 3 PM tomorrow works for me.")
 assert "__interrupt__" in r, "the run should pause for approval"

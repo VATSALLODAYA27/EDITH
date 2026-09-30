@@ -853,3 +853,28 @@ invoke → for each model in order:  cooling down? skip  │  try it
 - The lock also makes the "idempotent proposal" check correct under concurrency. Without it, two threads could both see "no duplicate yet" and both add one.
 - Also found: `apply_change` crashed on an **empty** calendar (`max()` of nothing). Fixed with `default=0`.
 - *Limits (`ponytail:`):* these are in-process locks, so they work for one server process. Several processes need an OS file lock (e.g. `portalocker`), or better, **a real database**, where transactions do both jobs.
+
+---
+
+## Follow-up: Proper Markdown in the UI
+
+**Problem:** answers were plain text with only `**bold**` handled, so tables, headings and lists showed as raw symbols. `finalize` even had to be told "no tables".
+**Solution:** `react-markdown` + `remark-gfm` (GitHub-style tables, strikethrough, task lists). The "no tables" rule was removed from `finalize`.
+- **Safe by design:** it builds React elements and **never uses `innerHTML`**. `skipHtml` **drops** raw HTML, and `javascript:` links are neutralised.
+  - *Alternative:* `marked` + `DOMPurify` builds an HTML string and then sanitises it. That works, but it's only as safe as the sanitiser. Never creating HTML is safer.
+- **Verified, not assumed:** a server-side render of a malicious answer (`<script>`, `<img onerror>`, a `javascript:` link, plus a table) produced the table and bold text, **no script, no onerror, `href=""`** for the bad link, and kept the safe link.
+- A test-writing lesson: in markdown, a line starting with an HTML tag starts an *HTML block* that runs **until a blank line**. My first test input "lost" a line for that reason, and it was the test, not the renderer.
+- Links open in a new tab with `rel="noopener noreferrer"`, so the opened page can't reach back into ours.
+- Cost: about 50 KB gzipped of extra JavaScript.
+
+---
+
+## Follow-up: Edit a Draft Before Approving
+
+**Problem:** approval was all-or-nothing. A nearly-right draft (e.g. signed "[Your Name]") had to be rejected and re-requested.
+**Solution:** a decision can carry **edits**: `{"decision": "approve", "edits": {"subject": "...", "body": "..."}}`. The approval node applies them to the draft (inside a locked transaction), **then** sends exactly that text. The outcome reads "✓ Sent d1 … (edited by you)".
+- **What's editable:** `approvals.EDITABLE = {"email": ("subject", "body")}`. **Never the recipient:** changing `to` would bypass what the agent proposed and what you reviewed. It's refused at two layers, the API model (`Literal["subject", "body"]`, so 422) and `execute()` (`ValueError`). Edits on non-email actions → 422.
+- **Old clients keep working:** plain `"approve"` / `"reject"` strings are still accepted.
+- **UI:** email cards get **✎ Edit**, which turns the subject and body into fields and marks the recipient as locked. Only fields that actually changed are sent as edits.
+- **Tests:** `approval_test.py` 1b and 1c drive the **real graph and API with a scripted router** that creates a draft as a side effect, so the real approval node pauses without any LLM. They check that the edited text is what gets sent and that editing the recipient is refused.
+- **Browser check, without touching real data:** the API on port 8000 was temporarily swapped for a **throwaway instance** (temporary `MEMORY_DB`, `APP_DATA_DIR` and `TRACE_LOG`). A demo account was created there, "[Your Name]" was edited into a real sign-off and approved, and the sent email in that instance's data contained exactly the edited body.

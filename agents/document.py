@@ -13,7 +13,9 @@ from pypdf import PdfReader
 from agents.tool_agent import run_tool_agent
 from userdata import workspace_dir
 
-MAX_CHARS = 20_000  # ponytail: long docs are cut off here; chunk + summarize-each-part when we need big PDFs
+MAX_CHARS = 20_000      # read_document shows this much; longer files -> summarize_long_document (map-reduce)
+CHUNK_CHARS = 10_000    # one "map" step's worth of text
+MAX_CHUNKS = 15         # ~150k characters (~40 pages); beyond that the cost/time is too high for one request
 
 
 def _safe_path(filename: str) -> Path:
@@ -57,20 +59,82 @@ def list_files() -> str:
 
 @tool
 def read_document(filename: str) -> str:
-    """Read the text of a .docx, .pdf, .txt or .md file from the workspace."""
+    """Read the text of a .docx, .pdf, .txt or .md file from the workspace (first 20,000 characters)."""
+    text = _extract_text(filename)
+    if len(text) <= MAX_CHARS:
+        return text
+    return (text[:MAX_CHARS] + f"\n[...truncated: showing {MAX_CHARS:,} of {len(text):,} characters. "
+            "To cover the WHOLE file, use summarize_long_document.]")
+
+
+def _extract_text(filename: str) -> str:
     path = _safe_path(filename)
     if not path.exists():
         raise FileNotFoundError(f"'{filename}' not found. Use list_files to see what exists.")
     suffix = path.suffix.lower()
     if suffix == ".docx":
-        text = "\n".join(p.text for p in Document(path).paragraphs)
-    elif suffix == ".pdf":
-        text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
-    elif suffix in (".txt", ".md"):
-        text = path.read_text(encoding="utf-8")
-    else:
-        raise ValueError(f"Unsupported file type '{suffix}'. Supported: .docx, .pdf, .txt, .md")
-    return text[:MAX_CHARS] + ("\n[...truncated]" if len(text) > MAX_CHARS else "")
+        return "\n".join(p.text for p in Document(path).paragraphs)
+    if suffix == ".pdf":
+        return "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+    if suffix in (".txt", ".md"):
+        return path.read_text(encoding="utf-8")
+    raise ValueError(f"Unsupported file type '{suffix}'. Supported: .docx, .pdf, .txt, .md")
+
+
+def _chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:
+    """Split at paragraph boundaries (never mid-sentence if avoidable), each chunk <= size characters."""
+    chunks, current = [], ""
+    for para in text.split("\n"):
+        while len(para) > size:  # a single giant paragraph: hard-split it
+            chunks.append(para[:size])
+            para = para[size:]
+        if len(current) + len(para) + 1 > size and current:
+            chunks.append(current)
+            current = ""
+        current += para + "\n"
+    return chunks + [current] if current.strip() else chunks
+
+
+_summarizer = None
+
+
+def summarizer():
+    """The LLM used for map-reduce (created lazily, so tests can swap in a fake)."""
+    global _summarizer
+    if _summarizer is None:
+        from llm import get_llm
+        _summarizer = get_llm()
+    return _summarizer
+
+
+@tool
+def summarize_long_document(filename: str, focus: str = "") -> str:
+    """Summarize a document of ANY length (map-reduce: summarize each part, then combine).
+    Use it when read_document says the file was truncated. `focus` = what to pay attention to (optional)."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    text = _extract_text(filename)
+    parts = _chunks(text)
+    if len(parts) > MAX_CHUNKS:
+        raise ValueError(f"{filename} is too long ({len(text):,} characters, {len(parts)} parts; max {MAX_CHUNKS}).")
+    want = f" Pay special attention to: {focus}." if focus else ""
+    # MAP: each part on its own. ponytail: sequential to respect rate limits; could run a few in parallel.
+    notes = []
+    for i, part in enumerate(parts, 1):
+        notes.append(summarizer().invoke([
+            SystemMessage("Summarize this PART of a longer document in at most 8 bullet points. Keep every number, "
+                          "name, date and decision exactly; don't add anything that isn't in the text." + want),
+            HumanMessage(f"Part {i} of {len(parts)}:\n\n{part}"),
+        ]).text)
+    if len(notes) == 1:
+        return f"Summary of {filename}:\n{notes[0]}"
+    # REDUCE: combine the part-summaries (small enough now) into one summary
+    combined = summarizer().invoke([
+        SystemMessage("Combine these part-summaries of ONE document into a single structured summary. Keep all key "
+                      "numbers, names, dates and decisions; remove repetition; don't add anything new." + want),
+        HumanMessage("\n\n".join(f"[Part {i}]\n{n}" for i, n in enumerate(notes, 1))),
+    ]).text
+    return f"Summary of {filename} ({len(text):,} characters, {len(parts)} parts):\n{combined}"
 
 
 @tool
@@ -100,11 +164,12 @@ def append_to_document(filename: str, content: str) -> str:
     return f"Appended to {filename}"
 
 
-TOOLS = [list_files, read_document, create_document, append_to_document]
+TOOLS = [list_files, read_document, summarize_long_document, create_document, append_to_document]
 
 SYSTEM = """You are the Document Agent. You read, summarize, create and edit documents in the user's workspace.
 - If unsure of a file name, call list_files first.
 - To summarize, call read_document, then write the summary yourself. Only use facts from the document.
+- If read_document says the file was truncated, use summarize_long_document instead, so the WHOLE file is covered.
 - Only create or change files when the task asks for a file. To read, extract or summarize, reply with the text.
 - Write document content in simple markdown: '# ' title, '## ' headings, '- ' bullets.
 - End with a short message: what you did and which file(s) you created or changed."""

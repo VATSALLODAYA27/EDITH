@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { downloadFile, getAgents, getPreview, getProfile, getThread, getThreads, LoggedOut, login, logout, me, register,
   resumeTask, saveProfile, streamTask } from "./api.js";
 
@@ -22,10 +24,17 @@ const EXAMPLES = [
   "What is the latest stable version of Python?",
 ];
 
-// Agents answer in light markdown. Render **bold** as <strong> by splitting into React elements -
-// never via innerHTML, because LLM output is untrusted and could contain HTML/script.
+// Agents answer in markdown (lists, tables, bold...). react-markdown builds React elements - never innerHTML -
+// and skipHtml DROPS any raw HTML, because LLM output is untrusted (it may quote a web page or a phishing email).
+// It also neutralises javascript: links. Links open in a new tab without giving that page access to ours.
+const MD_COMPONENTS = { a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> };
+
 function Rich({ text }) {
-  return text.split("**").map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
+  return (
+    <div className="md">
+      <Markdown remarkPlugins={[remarkGfm]} skipHtml components={MD_COMPONENTS}>{text}</Markdown>
+    </div>
+  );
 }
 
 const C = 200, R = 145; // SVG centre and ring radius
@@ -137,9 +146,23 @@ function FileCard({ name }) {
 // --- Phase 9: human approval. The run is PAUSED on the server until these decisions are sent. ---
 const KIND_ICON = { email: "✉️", calendar: "📅", file: "🗑️" };
 
-function ActionDetails({ action }) {
+function ActionDetails({ action, edit, onEdit }) {
   const d = action.details;
   if (action.kind === "email") {
+    if (edit) { // editing: the recipient stays fixed (it's what the agent proposed); only subject/body change
+      return (
+        <div className="paper email-preview email-edit">
+          <p><b>To:</b> {d.to} <span className="locked">(can't be changed here)</span></p>
+          <label><b>Subject</b>
+            <input value={edit.subject} onChange={(e) => onEdit({ ...edit, subject: e.target.value })} />
+          </label>
+          <label><b>Body</b>
+            <textarea rows={Math.min(14, edit.body.split("\n").length + 2)} value={edit.body}
+                      onChange={(e) => onEdit({ ...edit, body: e.target.value })} />
+          </label>
+        </div>
+      );
+    }
     return (
       <div className="paper email-preview">
         <p><b>To:</b> {d.to}</p><p><b>Subject:</b> {d.subject}</p>
@@ -160,8 +183,24 @@ function ActionDetails({ action }) {
 
 function ApprovalPanel({ actions, onSubmit, busy }) {
   const [decisions, setDecisions] = useState({}); // id -> "approve" | "reject"; missing = reject (safe default)
+  const [edits, setEdits] = useState({}); // id -> {subject, body} while the user edits an email
   const all = (value) => setDecisions(Object.fromEntries(actions.map((a) => [a.id, value])));
   const approved = actions.filter((a) => decisions[a.id] === "approve").length;
+
+  function toggleEdit(a) {
+    setEdits(({ [a.id]: open, ...rest }) => (open ? rest : { ...rest, [a.id]: { subject: a.details.subject, body: a.details.body } }));
+  }
+
+  function submit() {
+    // An approved email with changed text is sent as {"decision": "approve", "edits": {...}}; the rest stay plain strings.
+    onSubmit(Object.fromEntries(Object.entries(decisions).map(([id, decision]) => {
+      const e = edits[id];
+      const a = actions.find((x) => x.id === id);
+      const changed = e && decision === "approve" &&
+        Object.fromEntries(["subject", "body"].filter((k) => e[k] !== a.details[k]).map((k) => [k, e[k]]));
+      return [id, changed && Object.keys(changed).length ? { decision, edits: changed } : decision];
+    })));
+  }
   return (
     <section className="panel approval" aria-live="assertive">
       <p className="eyebrow">⚠ YOUR APPROVAL IS NEEDED · nothing below has happened yet</p>
@@ -170,19 +209,23 @@ function ApprovalPanel({ actions, onSubmit, busy }) {
           <header>
             <span className="action-title">{KIND_ICON[a.kind]} {a.summary}</span>
             <span className="choice" role="group" aria-label={`Decision for ${a.summary}`}>
+              {a.kind === "email" && (
+                <button type="button" className={edits[a.id] ? "on edit" : ""} aria-pressed={!!edits[a.id]}
+                        onClick={() => toggleEdit(a)}>✎ {edits[a.id] ? "Editing" : "Edit"}</button>
+              )}
               <button type="button" className={decisions[a.id] === "approve" ? "on approve" : ""} aria-pressed={decisions[a.id] === "approve"}
                       onClick={() => setDecisions({ ...decisions, [a.id]: "approve" })}>✓ Approve</button>
               <button type="button" className={decisions[a.id] === "reject" ? "on reject" : ""} aria-pressed={decisions[a.id] === "reject"}
                       onClick={() => setDecisions({ ...decisions, [a.id]: "reject" })}>✗ Reject</button>
             </span>
           </header>
-          <ActionDetails action={a} />
+          <ActionDetails action={a} edit={edits[a.id]} onEdit={(e) => setEdits({ ...edits, [a.id]: e })} />
         </article>
       ))}
       <div className="approval-row">
         <button type="button" className="ghost" onClick={() => all("approve")}>Approve all</button>
         <button type="button" className="ghost" onClick={() => all("reject")}>Reject all</button>
-        <button type="button" className="launch" disabled={busy} onClick={() => onSubmit(decisions)}>
+        <button type="button" className="launch" disabled={busy} onClick={submit}>
           Submit · {approved} approved, {actions.length - approved} rejected
         </button>
       </div>

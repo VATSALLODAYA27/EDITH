@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agents.document import _safe_path
 from auth import AuthError, login, logout, register, user_for_token
@@ -83,9 +83,23 @@ class TaskResponse(BaseModel):
     pending_approval: list[dict] = []  # non-empty = the run is PAUSED until POST /tasks/{thread_id}/resume
 
 
+class Decision(BaseModel):
+    decision: Literal["approve", "reject"]
+    # emails only: the human's final wording. The recipient is NOT editable (it's what the agent proposed/you saw).
+    edits: dict[Literal["subject", "body"], str] = Field(default_factory=dict)
+
+    @field_validator("edits")
+    @classmethod
+    def _limit(cls, edits):
+        if any(len(v) > 20_000 for v in edits.values()):
+            raise ValueError("edit too long")
+        return edits
+
+
 class ResumeRequest(BaseModel):
-    # one decision per pending action id; anything missing counts as "reject" (safe default)
-    decisions: dict[str, Literal["approve", "reject"]]
+    # one decision per pending action id: "approve" | "reject" | {"decision": ..., "edits": {...}}.
+    # Anything missing counts as "reject" (safe default).
+    decisions: dict[str, Literal["approve", "reject"] | Decision]
 
 
 class AgentInfo(BaseModel):
@@ -216,6 +230,8 @@ def _stream(graph_input, config: dict, thread_id: str, user: str) -> StreamingRe
                         yield _sse("plan", {"turn": out.get("turns"), "agents": [p["agent"] for p in out.get("plan", [])]})
                     elif node == "finalize":
                         yield _sse("final", {"final_answer": out["final_answer"]})
+                    elif node == "compact":  # housekeeping after the answer (older turns -> summary): nothing to show
+                        continue
                     else:  # an agent finished
                         yield _sse("agent", {"agent": node, "result": out["agent_results"][node]})
         except Exception as e:  # headers are already sent, so errors travel as an event, not a status code
@@ -246,7 +262,15 @@ def resume_task(thread_id: str, req: ResumeRequest, user: str = Depends(current_
     unknown = set(req.decisions) - waiting
     if unknown:  # decisions must refer to exactly the actions shown to the user
         raise HTTPException(status_code=422, detail=f"Unknown action ids: {sorted(unknown)}")
-    return _stream(Command(resume=req.decisions), thread_config(thread_id), thread_id, user)
+    decisions = {}
+    for action_id, d in req.decisions.items():
+        if isinstance(d, Decision):
+            if d.edits and not action_id.startswith("email:"):
+                raise HTTPException(status_code=422, detail=f"Only emails can be edited ({action_id}).")
+            decisions[action_id] = d.model_dump()
+        else:
+            decisions[action_id] = d
+    return _stream(Command(resume=decisions), thread_config(thread_id), thread_id, user)
 
 
 # --- OUTPUT FILES: preview (JSON the UI draws) + download. Same security check as the agents' tools. ---
@@ -300,6 +324,7 @@ def thread_messages(thread_id: str, user: str = Depends(current_user)):
     return {"thread_id": thread_id,
             "messages": [{"role": "user" if m.type == "human" else "assistant", "content": m.text}
                          for m in snap.values.get("messages", [])],
+            "summary": snap.values.get("summary", ""),  # older turns, compacted
             "pending_approval": waiting_for_approval(thread_id)}
 
 

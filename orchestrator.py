@@ -17,7 +17,7 @@ import time
 import uuid
 from typing import Annotated, Literal, TypedDict
 
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, RemoveMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.errors import GraphBubbleUp
@@ -79,6 +79,7 @@ def append_list(old: list, new):
 
 class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]  # the CONVERSATION: kept across requests in a thread
+    summary: str                                          # older conversation, compacted (kept across requests)
     plan: list[dict]                                      # --- per-run fields (reset on every new request) ---
     agent_results: Annotated[dict, merge_dict]            # {"rag_agent": "..."}; MERGES parallel writes
     history: Annotated[list[dict], append_list]           # every step this run dispatched: {turn, agent, inputs}
@@ -129,7 +130,14 @@ Rules:
 router = get_llm(schema=Route)
 
 
-MAX_HISTORY = 12  # messages of conversation the router sees; ponytail: summarize older turns if chats get long
+MAX_HISTORY = 12      # recent messages the router sees (older ones live on in `summary`)
+COMPACT_AFTER = 16    # once a thread has more messages than this...
+KEEP_RECENT = 6       # ...fold all but the last few into the running summary
+
+
+def summary_note(state) -> str:
+    """The compacted older conversation, appended to a system prompt (one system message works for every provider)."""
+    return f"\n\nSummary of the earlier conversation in this thread:\n{state['summary']}" if state.get("summary") else ""
 
 
 def format_results(results: dict) -> str:
@@ -150,7 +158,8 @@ def orchestrator(state: State) -> dict:
     # Results go in as an explicit, labelled message, so the LLM can't mistake them for its own words.
     shown = HumanMessage(f"Agent results so far:\n{format_results(results)}")
     try:
-        route = router.invoke([SystemMessage(ORCHESTRATOR_PROMPT)] + state["messages"][-MAX_HISTORY:] + [shown])
+        route = router.invoke([SystemMessage(ORCHESTRATOR_PROMPT + summary_note(state))]
+                          + state["messages"][-MAX_HISTORY:] + [shown])
     except AllModelsFailed:
         if not results:
             raise  # nothing done yet: fail the request (the API answers 503 "try again")
@@ -207,8 +216,12 @@ def approval(state: State) -> dict:
     outcomes = []
     for action in ours:
         try:  # anything not explicitly approved is rejected (safe default)
-            ok = decisions.get(action["id"]) == "approve"
-            outcomes.append(("✓ " + execute(action["id"])) if ok else ("✗ " + discard(action["id"]) + f" ({action['summary']})"))
+            d = decisions.get(action["id"], "reject")
+            d = d if isinstance(d, dict) else {"decision": d}  # "approve" | {"decision": "approve", "edits": {...}}
+            if d.get("decision") == "approve":
+                outcomes.append("✓ " + execute(action["id"], d.get("edits") or None))
+            else:
+                outcomes.append("✗ " + discard(action["id"]) + f" ({action['summary']})")
         except Exception as e:  # e.g. the slide was already gone: report it, don't crash the whole run
             outcomes.append(f"⚠ {action['summary']}: failed ({e})")
     print(f"[approval] {outcomes}")
@@ -260,11 +273,33 @@ def finalize(state: State) -> dict:
 def combine(state: State, results: dict) -> str:
     return llm.invoke([
         SystemMessage("Combine these agent results into one clear answer to the user's LATEST request. "
-                      "Keep every fact and citation; don't add new information. Format: short paragraphs and "
-                      "'- ' bullet lists with **bold** only; no tables and no HTML (the UI shows plain text)."),
+                      "Keep every fact and citation; don't add new information. Format: markdown (short paragraphs, "
+                      "bullet lists, **bold**, tables where they help); never HTML (the UI drops it)."),
         *state["messages"][-MAX_HISTORY:],
         HumanMessage(format_results(results)),
     ]).text
+
+
+# --- COMPACT: long conversations keep a rolling summary instead of silently forgetting old turns ---
+def compact(state: State) -> dict:
+    msgs = state.get("messages", [])
+    if len(msgs) <= COMPACT_AFTER:
+        return {}
+    old = msgs[:-KEEP_RECENT]
+    transcript = "\n".join(f"{'User' if m.type == 'human' else 'Assistant'}: {m.text[:1500]}" for m in old)
+    try:
+        summary = llm.invoke([
+            SystemMessage("Update the running summary of this conversation. Keep what the user may refer to later: "
+                          "their requests, decisions, file names, numbers, names, and what was sent or approved. "
+                          "At most 200 words."),
+            HumanMessage(f"Current summary:\n{state.get('summary') or '(none)'}\n\nOlder messages to fold in:\n{transcript}"),
+        ]).text
+    except AllModelsFailed:  # nothing is lost: the messages stay and we try again after the next request
+        trace("recover", kind="compact_skipped")
+        return {}
+    trace("compact", folded=len(old), kept=KEEP_RECENT)
+    # RemoveMessage(id) is understood by the add_messages reducer: those messages leave the saved state
+    return {"summary": summary, "messages": [RemoveMessage(id=m.id) for m in old]}
 
 
 # --- ISOLATION: one agent crashing must not kill the whole request ---
@@ -289,6 +324,7 @@ builder = StateGraph(State)
 builder.add_node("orchestrator", orchestrator)
 builder.add_node("approval", approval)
 builder.add_node("finalize", finalize)
+builder.add_node("compact", compact)
 for name, (node, _) in AGENTS.items():
     builder.add_node(name, guarded(name, node))
     builder.add_edge(name, "orchestrator")  # agents always report back
@@ -296,7 +332,8 @@ for name, (node, _) in AGENTS.items():
 builder.add_edge(START, "orchestrator")
 builder.add_conditional_edges("orchestrator", route_next, [*AGENTS, "approval"])  # possible destinations
 builder.add_edge("approval", "finalize")
-builder.add_edge("finalize", END)
+builder.add_edge("finalize", "compact")
+builder.add_edge("compact", END)
 # The checkpointer saves the full state after every step, keyed by thread_id (short-term memory + resume).
 graph = builder.compile(checkpointer=checkpointer)
 
