@@ -76,16 +76,85 @@ function Constellation({ nodes, phase, turn, descriptions }) {
 }
 
 // --- Output file previews: drawn from JSON the API extracts (content + structure, not PowerPoint's exact look) ---
-function SlidePreview({ slides }) {
+// The deck's theme colours become CSS variables, so the preview looks like the real file (older decks: CSS defaults).
+const DEFAULT_SERIES = ["#1F6FEB", "#22B8CF", "#0F2A44", "#7C9CBF", "#F59E0B", "#94A3B8"];
+const themeVars = (t) => (t ? Object.fromEntries(
+  ["dark", "primary", "accent", "text", "muted", "soft"].map((k) => [`--s-${k}`, `#${t[k]}`])) : {});
+
+function MiniChart({ chart, colors }) {
+  const { type, categories, values } = chart;
+  if (type === "pie") {  // conic-gradient = a pie chart in pure CSS
+    const total = values.reduce((a, b) => a + b, 0) || 1;
+    let acc = 0;
+    const stops = values.map((v, i) => `${colors[i % colors.length]} ${(acc / total) * 360}deg ${((acc += v) / total) * 360}deg`);
+    return (
+      <div className="mini-pie-wrap">
+        <div className="mini-pie" style={{ background: `conic-gradient(${stops.join(", ")})` }} />
+        <ul className="mini-legend">
+          {categories.map((c, i) => <li key={i}><i style={{ background: colors[i % colors.length] }} />{c}</li>)}
+        </ul>
+      </div>
+    );
+  }
+  const max = Math.max(...values, 0) || 1;
+  const min = type === "line" ? Math.min(...values, 0) : 0;
+  if (type === "line") {
+    const pts = values.map((v, i) => `${(i / Math.max(values.length - 1, 1)) * 100},${50 - ((v - min) / (max - min || 1)) * 46 - 2}`);
+    return (
+      <div className="mini-chart">
+        <svg viewBox="0 0 100 50" preserveAspectRatio="none" className="mini-line">
+          <polyline points={pts.join(" ")} fill="none" stroke="var(--s-primary)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        </svg>
+        <div className="mini-axis">{categories.map((c, i) => <span key={i}>{c}</span>)}</div>
+      </div>
+    );
+  }
   return (
-    <div className="slides">
+    <div className="mini-chart mini-bars">
+      {values.map((v, i) => (
+        <div key={i} className="mini-bar">
+          <small>{v}</small>
+          <i style={{ height: `${(Math.max(v, 0) / max) * 100}%` }} />
+          <span>{categories[i]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SlideBody({ s, colors }) {
+  const list = (items) => <ul>{items.map((b, i) => <li key={i}>{b}</li>)}</ul>;
+  switch (s.layout) {
+    case "title":
+    case "section":
+      return <>{[...(s.layout === "section" ? [s.text] : s.bullets)].filter(Boolean).map((b, i) => <p key={i} className="subtitle">{b}</p>)}</>;
+    case "stats":
+      return <div className="stats">{s.stats.map((x, i) => <div key={i} className="stat"><b>{x.value}</b><span>{x.label}</span></div>)}</div>;
+    case "chart":
+      return <div className="chart-row"><MiniChart chart={s.chart} colors={colors} />{s.bullets.length > 0 && list(s.bullets)}</div>;
+    case "two_column":
+      return (
+        <div className="cols">
+          {[[s.left_heading, s.bullets], [s.right_heading, s.right]].map(([h, items], i) => (
+            <div key={i} className="col">{h && <h4>{h}</h4>}{list(items)}</div>))}
+        </div>
+      );
+    case "quote":
+      return <p className="quote">“{s.text}”</p>;
+    default:
+      return list(s.bullets);
+  }
+}
+
+function SlidePreview({ slides, theme }) {
+  const colors = theme ? theme.series.map((c) => `#${c}`) : DEFAULT_SERIES;
+  return (
+    <div className="slides" style={themeVars(theme)}>
       {slides.map((s) => (
-        <div key={s.number} className={`slide ${s.number === 1 ? "title-slide" : ""}`}>
+        <div key={s.number} className={`slide s-${s.layout}`}>
           <span className="slide-no">{s.number}</span>
           <h3>{s.title || "(untitled)"}</h3>
-          {s.number === 1
-            ? s.bullets.map((b, i) => <p key={i} className="subtitle">{b}</p>)
-            : <ul>{s.bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>}
+          <SlideBody s={s} colors={colors} />
           {s.notes && <p className="notes" title={s.notes}>🗒 {s.notes}</p>}
         </div>
       ))}
@@ -135,7 +204,7 @@ function FileCard({ name }) {
       </header>
       {error && <p className="empty">Preview unavailable: {error}</p>}
       {!data && !error && <p className="empty">Loading preview…</p>}
-      {data?.type === "pptx" && <SlidePreview slides={data.slides} />}
+      {data?.type === "pptx" && <SlidePreview slides={data.slides} theme={data.theme} />}
       {data?.type === "docx" && <DocPreview blocks={data.blocks} />}
       {data?.type === "xlsx" && <SheetPreview sheets={data.sheets} />}
       {data?.type === "text" && <pre className="text-preview">{data.text}</pre>}

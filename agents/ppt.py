@@ -355,6 +355,47 @@ def slide_text(slide) -> tuple[str, list[str]]:
     return title, lines
 
 
+def slide_info(slide, first: bool = False) -> dict:
+    """Layout + structured content of a slide, recovered from our shape names, so the UI preview can draw it
+    like the real slide. Older placeholder-based slides come back as plain 'bullets'."""
+    title, lines = slide_text(slide)
+    named = {s.name: s for s in slide.shapes}
+
+    def paras(shape):
+        return [p for p in shape.text_frame.paragraphs if p.text]
+
+    def is_bullet(p):
+        return p._p.pPr is not None and p._p.pPr.find(qn("a:buChar")) is not None
+
+    info = {"title": title, "layout": "title" if first else "bullets", "bullets": lines}
+    stats = [s for s in slide.shapes if s.name == "stat"]
+    if stats:
+        cards = [[p.text for p in paras(s)] + [""] for s in stats]
+        return info | {"layout": "stats", "bullets": [], "stats": [{"value": c[0], "label": c[1]} for c in cards]}
+    if "chart" in named:
+        chart = named["chart"].chart
+        plot = chart.plots[0]
+        kind = "pie" if chart.chart_type == XL_CHART_TYPE.PIE else "line" if "LINE" in str(chart.chart_type) else "bar"
+        body = [p.text for p in paras(named["body"])] if "body" in named else []
+        return info | {"layout": "chart", "bullets": body, "chart": {
+            "type": kind, "categories": list(plot.categories), "values": list(plot.series[0].values)}}
+    if "left" in named or "right" in named:
+        cols = {}
+        for side in ("left", "right"):
+            ps = paras(named[side]) if side in named else []
+            head = ps[0].text if ps and not is_bullet(ps[0]) else ""
+            cols[side] = (head, [p.text for p in ps if is_bullet(p)])
+        return info | {"layout": "two_column", "left_heading": cols["left"][0], "bullets": cols["left"][1],
+                       "right_heading": cols["right"][0], "right": cols["right"][1]}
+    if "quote" in named:
+        return info | {"layout": "quote", "bullets": [], "text": named["quote"].text_frame.text}
+    ovals = any(s.name == "deco" and getattr(s, "auto_shape_type", None) == MSO_SHAPE.OVAL
+                for s in slide.shapes if s.shape_type == 1)  # 1 = auto shape
+    if ovals and not first:
+        return info | {"layout": "section", "bullets": [], "text": " ".join(lines)}
+    return info
+
+
 def _body(slide):
     """The shape `bullets` updates go into: designed 'body' / 'subtitle', or an old deck's placeholder 1."""
     for s in slide.shapes:

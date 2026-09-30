@@ -1,6 +1,7 @@
 """Turn workspace files into JSON the UI can draw: slides, document blocks, sheet tables, or plain text.
 
-Only CONTENT and structure (not fonts/themes); the real file is always available via download.
+Content and structure (for slides also the layout and theme colours, so the UI can draw them like the real deck);
+the real file is always available via download.
 """
 from docx import Document
 from openpyxl import load_workbook
@@ -8,7 +9,7 @@ from pptx import Presentation
 from pypdf import PdfReader
 
 from agents.document import _safe_path
-from agents.ppt import slide_text
+from agents.ppt import THEMES, slide_info
 from userdata import workspace_dir
 
 MAX_ROWS, MAX_COLS, MAX_TEXT = 30, 12, 5_000
@@ -36,15 +37,15 @@ def preview(filename: str) -> dict:
 
     if kind == "pptx":
         slides = []
-        for n, s in enumerate(Presentation(path).slides, start=1):
-            title, lines = slide_text(s)  # designed slides keep text in named shapes, charts become text
-            slides.append({
+        prs = Presentation(path)
+        for n, s in enumerate(prs.slides, start=1):
+            slides.append({  # layout + content recovered from the designed slide (old decks: plain bullets)
                 "number": n,
-                "title": title,
-                "bullets": lines,
+                **slide_info(s, first=n == 1),
                 "notes": s.notes_slide.notes_text_frame.text if s.has_notes_slide else "",
             })
-        return {"type": "pptx", "slides": slides}
+        # the deck's colours, so the preview looks like the real file (None for older, undesigned decks)
+        return {"type": "pptx", "slides": slides, "theme": THEMES.get(prs.core_properties.category)}
 
     if kind == "docx":
         blocks = []
