@@ -604,7 +604,7 @@ React / curl ──HTTP──► FastAPI: validate (Pydantic) → auth (X-API-Ke
 
 ---
 
-## Phase 7: React Frontend ("Mission Control")
+## Phase 7: React Frontend ("EDITH", first called "Mission Control")
 
 **Problem:** the API is only usable from curl or `/docs`. People need a page where they type a request and **watch** the Orchestrator work.
 **Files:** `frontend/`, which contains `index.html`, `src/App.jsx` (the UI), `src/api.js` (the API calls and SSE parser), `src/App.css` and `vite.config.js`.

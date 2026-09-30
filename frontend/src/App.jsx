@@ -379,7 +379,7 @@ function LoginScreen({ onLogin }) {
     <div className="page login-page">
       <form className="panel login" onSubmit={submit}>
         <p className="eyebrow">MULTI-AGENT ORCHESTRATOR</p>
-        <h1>Mission Control</h1>
+        <h1>EDITH</h1>
         <p className="empty">{mode === "login" ? "Log in to see your missions."
           : "Create your account. The first account on this server takes over the data that existed before accounts."}</p>
         <label>Username
@@ -400,7 +400,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-// The auth gate: checking -> login screen or Mission Control. key={user}: another user starts with a clean slate.
+// The auth gate: checking -> login screen or EDITH. key={user}: another user starts with a clean slate.
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined = still checking, null = logged out
   useEffect(() => { me().then((u) => setUser(u.username)).catch(() => setUser(null)); }, []);
@@ -526,7 +526,7 @@ function MissionControl({ username, onLoggedOut }) {
       <header className="top">
         <div>
           <p className="eyebrow">MULTI-AGENT ORCHESTRATOR</p>
-          <h1>Mission Control</h1>
+          <h1>EDITH</h1>
         </div>
         <div className="top-actions">
           <button type="button" className={`ghost ${drawer === "history" ? "on" : ""}`} aria-expanded={drawer === "history"}
