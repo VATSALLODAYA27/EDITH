@@ -1,0 +1,14 @@
+langgraph
+langchain-groq
+langchain-google-genai
+chromadb
+python-docx
+pypdf
+openpyxl
+python-pptx
+tavily-python
+beautifulsoup4
+httpx
+fastapi
+uvicorn
+langgraph-checkpoint-sqlite

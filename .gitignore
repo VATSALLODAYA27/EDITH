@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+data/chroma/
+data/mailbox.json
+data/calendar.json
+node_modules/
+frontend/node_modules/
+frontend/dist/
+data/memory.sqlite*
+data/logs/
