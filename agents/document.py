@@ -2,6 +2,8 @@
 
     task -> tool-calling loop (list / read / create / append) -> "Created X" / summary -> result
 
+Changing an existing document's content (templates, surgical edits) is the Document Editor's job: agents/editor.py
+
 Run the standalone test from the project root:  python -m agents.document
 """
 from pathlib import Path
@@ -43,16 +45,28 @@ def _add_text(paragraph, text: str) -> None:
             paragraph.add_run(piece).bold = i % 2 == 1
 
 
+def _paragraph(doc, style: str):
+    """A paragraph in `style`, or a plain one if the document (e.g. someone's template) doesn't define that style."""
+    try:
+        doc.styles[style]  # check first: add_paragraph(style=missing) would add the paragraph, THEN raise
+    except KeyError:
+        return doc.add_paragraph()
+    return doc.add_paragraph(style=style)
+
+
 def _write_markdown(doc, content: str) -> None:
     """Turn simple markdown ('# ', '## ', '- ', **bold**) into Word headings, bullets and paragraphs."""
     for line in content.splitlines():
         line = line.strip()
-        if line.startswith("## "):
-            doc.add_heading(line[3:].replace("**", ""), level=2)
-        elif line.startswith("# "):
-            doc.add_heading(line[2:].replace("**", ""), level=1)
+        if line.startswith(("# ", "## ")):
+            level = 2 if line.startswith("## ") else 1
+            p = _paragraph(doc, f"Heading {level}")
+            run = p.add_run(line[level + 1:].replace("**", ""))
+            if not p.style.name.startswith("Heading"):  # no heading style in this template: at least make it bold
+                run.bold = True
         elif line.startswith(("- ", "* ")):
-            _add_text(doc.add_paragraph(style="List Bullet"), line[2:])
+            p = _paragraph(doc, "List Bullet")
+            _add_text(p, line[2:] if p.style.name == "List Bullet" else "• " + line[2:])
         elif line:
             _add_text(doc.add_paragraph(), line)
 

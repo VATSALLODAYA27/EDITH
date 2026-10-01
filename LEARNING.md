@@ -954,3 +954,24 @@ The router only saw the last 12 messages, so older context vanished silently.
 
 - **Tested:** the uploader's RAG search finds their file, another user's search does **not**, and shared docs still work for both. Bad type → 400, fake PDF → 415, over 20 MB → 413, no login → 401, and other users get 404 on the file. The test used a second throwaway account, so the real user's index was never touched, and the test chunks were deleted.
 - **Not yet:** deleting an upload, which would also remove its chunks. Scanned PDFs have no text to index; that would need OCR.
+
+---
+
+## Follow-up: Document Editor (templates + surgical edits)
+
+**Problem:** "here's a PDF and our company template, put the PDF's content into it", or "change the date in this letter". The Document agent could only create new plain documents or append to them.
+**Solution:** a **separate agent, `document_editor`**, that changes existing documents and keeps their look. **Precise routing:** the registry descriptions draw hard lines: `document_agent` reads and creates new files, `document_editor` edits, rewrites and re-templates, and `rag_agent` only answers questions.
+
+| Tool | What it does | Why this way |
+|---|---|---|
+| `fill_template(template_file, content)` | Copies the template .docx (logo, header, footer, fonts, page setup), removes its trailing empty lines, and writes the content below it in the **template's own styles** | A PDF can't be edited in place, so its content is rewritten into the user's own .docx. A template without Heading or List Bullet styles still works (bold headings, "•" bullets). |
+| `edit_document(filename, replacements)` | Exact find → replace in the body, tables (also nested), headers and footers. **All-or-nothing:** if one `find` is missing, nothing is saved. | Word stores text in *runs*. Replacing inside a run keeps its bold, size and font. If the text spans runs, it moves into the first run, which keeps the paragraph style. |
+
+- **Both save a new file** (`_filled`, `_edited`, or `_2` when the name is taken), so the user's originals are never lost.
+- **Found while testing:** `add_paragraph(style=<missing>)` in python-docx **adds the paragraph and then raises**, which left blank lines. Now the style is checked before the paragraph is added.
+- **Routing check (router only, no agents run):** at first "Rewrite the report onto our letterhead" went to `document_agent`, because it also *creates* documents. After adding "NOT for rewriting/editing … that's document_editor" to its description, all 4 cases route correctly.
+- *Alternatives:*
+  - Editing PDFs directly (PyMuPDF redact plus overlay): fragile layout, and an AGPL licence.
+  - `docxtpl` / Jinja `{{placeholders}}`: precise, but needs a prepared template.
+  - Word or LibreOffice automation: needs the app installed.
+- **Not yet:** saving the result as PDF (would need Word or LibreOffice to export).

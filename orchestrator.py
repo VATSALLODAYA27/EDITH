@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from agents.browser import browser_agent
 from agents.calendar_agent import calendar_agent
 from agents.document import document_agent
+from agents.editor import document_editor
 from agents.excel import excel_agent
 from agents.mail import email_agent
 from agents.ppt import ppt_agent
@@ -48,11 +49,18 @@ AGENTS = {
                                        "how things work, definitions). No internet access."),
     "browser_agent": (browser_agent, "the live public web: current/recent info (latest versions, news, prices, "
                                      "anything that may have changed recently) or reading a given URL. Cites sources."),
-    "rag_agent": (rag_agent, "search the knowledge base: company docs (HR/leave, travel & expenses, internal "
-                             "projects, offices) AND documents the user uploaded. Answers questions about their "
-                             "content with citations."),
-    "document_agent": (document_agent, "read, summarize, create or edit FILES in the user's workspace "
-                                       "(Word .docx, PDF, .txt, .md; NOT spreadsheets). Use when the user names such a file or wants a document made."),
+    "rag_agent": (rag_agent, "ANSWER QUESTIONS from the knowledge base: company docs (HR/leave, travel & expenses, "
+                             "internal projects, offices) and documents the user uploaded, with citations. "
+                             "Never creates, edits or rewrites files."),
+    "document_agent": (document_agent, "read, summarize or CREATE NEW document files in the user's workspace "
+                                       "(Word .docx, PDF, .txt, .md; NOT spreadsheets), or add a section to a .docx. "
+                                       "Use when the user names such a file or wants a new document made. NOT for "
+                                       "rewriting/editing an existing document or using the user's template or "
+                                       "letterhead: that's document_editor."),
+    "document_editor": (document_editor, "CHANGE the content of the user's existing documents while keeping their "
+                                         "look: rewrite a PDF/document into the user's template or letterhead .docx, "
+                                         "or make precise text edits (names, dates, sentences) in a .docx. Use it "
+                                         "alone for any request to edit, rewrite or re-template a document."),
     "excel_agent": (excel_agent, "spreadsheets (.xlsx): read data, calculate totals/averages/per-group numbers, "
                                  "create or edit sheets, formulas and charts."),
     "ppt_agent": (ppt_agent, "PowerPoint presentations (.pptx): create decks, add/edit/delete/reorder slides."),
@@ -422,6 +430,8 @@ if __name__ == "__main__":
         ("Summarize survey_report.pdf in two sentences.", {"document_agent"}),
         ("Create a Word document called lunch_invite.docx inviting the team to lunch on Friday at 1pm.",
          {"document_agent"}),
+        ("Rewrite survey_report.pdf into my company template acme_template.docx.", {"document_editor"}),
+        ("In offer_letter.docx change the joining date from 1 May to 3 June.", {"document_editor"}),
         ("Which product sold the most units in total in sales.xlsx?", {"excel_agent"}),
         ("Create offsite.pptx with a title slide 'Team Offsite' and one slide with: Date 12 Dec, "
          "Venue Pune office, Agenda planning + lunch.", {"ppt_agent"}),

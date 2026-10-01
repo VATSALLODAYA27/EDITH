@@ -10,6 +10,7 @@ const RING = [
   ["browser_agent", "🌐", "Browser"],
   ["rag_agent", "🗂️", "Knowledge"],
   ["document_agent", "📄", "Docs"],
+  ["document_editor", "✏️", "Editor"],
   ["excel_agent", "📊", "Excel"],
   ["ppt_agent", "📽️", "Slides"],
   ["email_agent", "✉️", "Email"],

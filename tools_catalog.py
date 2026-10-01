@@ -8,10 +8,10 @@ import sys
 
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
-from agents import browser, calendar_agent, document, excel, mail, ppt
+from agents import browser, calendar_agent, document, editor, excel, mail, ppt
 
 AGENT_TOOLS = {
-    "document_agent": document.TOOLS, "excel_agent": excel.TOOLS, "ppt_agent": ppt.TOOLS,
+    "document_agent": document.TOOLS, "document_editor": editor.TOOLS, "excel_agent": excel.TOOLS, "ppt_agent": ppt.TOOLS,
     "browser_agent": browser.TOOLS, "email_agent": mail.TOOLS, "calendar_agent": calendar_agent.TOOLS,
 }
 # rag_agent and research_agent have no tools: RAG always retrieves (a fixed pipeline), research just answers.
