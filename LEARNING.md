@@ -934,3 +934,23 @@ The router only saw the last 12 messages, so older context vanished silently.
   - Aspose.Slides (paid), Google Slides API (OAuth), or pptxgenjs (JavaScript).
   - Images per slide (e.g. from a stock-photo API) are a possible next step. They'd need a key and a download size limit.
 - **Bug seen in the app:** asking again for `survey_deck.pptx` hit "already exists", so the agent **edited the old plain deck** instead, and the result looked unchanged. **Fix in code:** `create_presentation` never overwrites, but now saves as `survey_deck_2.pptx` (`_3`...) and reports the name it used. The prompt also asks for at least 2 layouts, and for key numbers as stats or charts.
+
+---
+
+## Follow-up: Uploading Documents (workspace + RAG)
+
+**Problem:** agents could only use files that were already in the workspace, and RAG only knew the company docs in `data/docs`.
+**Solution:** **📎 Add document** in the request box. `PUT /files/{name}` saves the file to **your workspace**, so every agent can use it. PDF, DOCX, TXT and MD files are also **indexed into RAG for you only**. The next request starts with "Attached documents: …", so the agents know the file names.
+
+| Piece | How | Why / alternatives |
+|---|---|---|
+| **Upload format** | The raw file is the request body (`PUT`), not multipart | FastAPI's `UploadFile` needs the `python-multipart` package; raw bytes need nothing new. *Multipart* is the norm for HTML forms with several fields. |
+| **Checks** | Allowed types only, 20 MB cap counted **while reading** (a fake `Content-Length` can't bypass it), file signature (`%PDF`, Office = zip `PK`), UTF-8 for text, `_safe_path` | Never trust the client's file name or type |
+| **Never overwrite** | `free_path()`: a taken name becomes `report_2.pdf`, and the response returns the saved name | The same helper is used by `create_presentation` |
+| **Per-user RAG** | One Chroma index with an `owner` field: `"shared"` (company docs) or the user id. `search()` filters `owner in [shared, me]`. | One collection per user would also work, but means more collections to manage. Filtering keeps one index. |
+| **Chunking uploads** | ~1,500-character chunks at paragraph breaks (`_chunks`), each prefixed with the file name | Uploads have no `## ` headings like our company docs |
+| **No wasted embeddings** | `_store()` embeds only new or changed text. A metadata-only change (adding `owner`) uses `collection.update` with **no re-embedding**. | |
+| **Failure** | If embedding fails (quota), the file is still saved, and the UI says it isn't in the knowledge base yet | |
+
+- **Tested:** the uploader's RAG search finds their file, another user's search does **not**, and shared docs still work for both. Bad type → 400, fake PDF → 415, over 20 MB → 413, no login → 401, and other users get 404 on the file. The test used a second throwaway account, so the real user's index was never touched, and the test chunks were deleted.
+- **Not yet:** deleting an upload, which would also remove its chunks. Scanned PDFs have no text to index; that would need OCR.

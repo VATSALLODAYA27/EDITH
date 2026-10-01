@@ -48,8 +48,9 @@ AGENTS = {
                                        "how things work, definitions). No internet access."),
     "browser_agent": (browser_agent, "the live public web: current/recent info (latest versions, news, prices, "
                                      "anything that may have changed recently) or reading a given URL. Cites sources."),
-    "rag_agent": (rag_agent, "search the company knowledge base (HR/leave, travel & expenses, "
-                             "internal projects, offices) to answer questions about the company."),
+    "rag_agent": (rag_agent, "search the knowledge base: company docs (HR/leave, travel & expenses, internal "
+                             "projects, offices) AND documents the user uploaded. Answers questions about their "
+                             "content with citations."),
     "document_agent": (document_agent, "read, summarize, create or edit FILES in the user's workspace "
                                        "(Word .docx, PDF, .txt, .md; NOT spreadsheets). Use when the user names such a file or wants a document made."),
     "excel_agent": (excel_agent, "spreadsheets (.xlsx): read data, calculate totals/averages/per-group numbers, "

@@ -1,6 +1,10 @@
-"""RAG Agent: answers questions from the user's private documents.
+"""RAG Agent: answers questions from the company knowledge base and the documents the user uploaded.
 
     task -> embed -> ChromaDB finds the TOP_K closest chunks -> LLM answers ONLY from those -> result
+
+Two kinds of chunks share one index, told apart by the `owner` metadata:
+  "shared"  - company docs in data/docs (everyone)       ids "hr_policy.md#0"
+  <user id> - files that user uploaded (only that user)   ids "u:<user>:report.pdf#0"
 
 Run the standalone test from the project root:  python -m agents.rag
 """
@@ -12,11 +16,15 @@ from chromadb.utils.embedding_functions import register_embedding_function
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
+from agents.document import _chunks, _extract_text
 from llm import get_llm
+from userdata import CURRENT_USER
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = ROOT / "data" / "docs"
 TOP_K = 3  # how many chunks the LLM gets; more = more context but more noise and tokens
+RAG_TYPES = (".pdf", ".docx", ".txt", ".md")  # uploads with extractable text get indexed
+UPLOAD_CHUNK = 1500  # characters; uploaded files have no "## " structure, so split by size at paragraph breaks
 
 # Embeddings via the Gemini API (GOOGLE_API_KEY) - no local model. Note: chunk text is sent to Google.
 # Vectors from different models are NOT comparable, so the index must be rebuilt if this model changes.
@@ -69,6 +77,26 @@ def chunk(text: str) -> list[str]:
     return [f"{title.strip()}\n## {s.strip()}" for s in sections] or [title.strip()]
 
 
+def _store(ids: list[str], docs: list[str], metas: list[dict]) -> int:
+    """Upsert chunks, embedding only new or changed text (embedding costs API quota). Returns how many were embedded."""
+    if not ids:
+        return 0
+    stored = collection.get(ids=ids, include=["documents", "metadatas"])
+    old = {cid: (d, m) for cid, d, m in zip(stored["ids"], stored["documents"], stored["metadatas"])}
+    changed = [k for k, cid in enumerate(ids) if cid not in old or old[cid][0] != docs[k]]
+    relabel = [k for k, cid in enumerate(ids) if k not in changed and old[cid][1] != metas[k]]
+    if changed:
+        collection.upsert(  # upsert = insert or update by id
+            ids=[ids[k] for k in changed],
+            documents=[docs[k] for k in changed],
+            metadatas=[metas[k] for k in changed],
+        )  # no embeddings= -> Chroma calls GeminiEmbeddings for us
+        print(f"[rag] embedded {len(changed)} new/changed chunks via {EMBED_MODEL}")
+    if relabel:  # same text, new metadata (e.g. the owner field added): no re-embedding needed
+        collection.update(ids=[ids[k] for k in relabel], metadatas=[metas[k] for k in relabel])
+    return len(changed)
+
+
 def ingest() -> int:
     """(Re)index every .md/.txt file in data/docs. Safe to run repeatedly. Returns how many chunks were embedded."""
     ids, docs, metas = [], [], []
@@ -76,28 +104,33 @@ def ingest() -> int:
         for i, text in enumerate(chunk(path.read_text(encoding="utf-8"))):
             ids.append(f"{path.name}#{i}")
             docs.append(text)
-            metas.append({"source": path.name})
-
-    # Embedding costs API quota, so only (re)embed chunks that are new or whose text changed.
-    stored = collection.get(ids=ids, include=["documents"]) if ids else {"ids": [], "documents": []}
-    old_text = dict(zip(stored["ids"], stored["documents"]))
-    changed = [i for i, (cid, text) in enumerate(zip(ids, docs)) if old_text.get(cid) != text]
-    if changed:
-        collection.upsert(  # upsert = insert or update by id
-            ids=[ids[i] for i in changed],
-            documents=[docs[i] for i in changed],
-            metadatas=[metas[i] for i in changed],
-        )  # no embeddings= -> Chroma calls GeminiEmbeddings for us
-        print(f"[rag] embedded {len(changed)} new/changed chunks via {EMBED_MODEL}")
-    stale = [i for i in collection.get()["ids"] if i not in ids]     # chunks of deleted/shortened docs
+            metas.append({"source": path.name, "owner": "shared"})
+    embedded = _store(ids, docs, metas)
+    # chunks of deleted/shortened shared docs (users' uploads, ids "u:...", are managed by index_file)
+    stale = [i for i in collection.get()["ids"] if not i.startswith("u:") and i not in ids]
     if stale:
         collection.delete(ids=stale)
-    return len(changed)
+    return embedded
+
+
+def index_file(filename: str) -> int:
+    """Index one of the CURRENT user's workspace files, so their RAG questions can use it (nobody else's can).
+    Returns the number of chunks (0 = no extractable text, e.g. a scanned PDF)."""
+    owner = CURRENT_USER.get()
+    parts = [p.strip() for p in _chunks(_extract_text(filename), UPLOAD_CHUNK) if p.strip()]
+    ids = [f"u:{owner}:{filename}#{i}" for i in range(len(parts))]
+    _store(ids, [f"{filename}\n{p}" for p in parts], [{"source": filename, "owner": owner}] * len(parts))
+    old = collection.get(where={"$and": [{"owner": owner}, {"source": filename}]})["ids"]
+    stale = [i for i in old if i not in ids]  # the file got shorter
+    if stale:
+        collection.delete(ids=stale)
+    return len(parts)
 
 
 def search(query: str, k: int = TOP_K) -> list[dict]:
     """Return the k chunks whose meaning is closest to the query (distance: 0 = identical)."""
-    r = collection.query(query_texts=[query], n_results=k)  # Chroma -> GeminiEmbeddings.embed_query
+    r = collection.query(query_texts=[query], n_results=k,  # Chroma -> GeminiEmbeddings.embed_query
+                         where={"owner": {"$in": ["shared", CURRENT_USER.get()]}})  # company docs + MY uploads
     return [
         {"source": m["source"], "text": d, "distance": round(dist, 3)}
         for m, d, dist in zip(r["metadatas"][0], r["documents"][0], r["distances"][0])

@@ -26,7 +26,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 from pydantic import BaseModel, Field
 
-from agents.document import _safe_path, list_files  # same workspace + same security check
+from agents.document import _safe_path, free_path, list_files  # same workspace + same security check
 from agents.tool_agent import run_tool_agent
 
 TITLE_ONLY_LAYOUT = 5  # default template's "Title Only": keeps a real title placeholder (read/rename/delete use it)
@@ -453,10 +453,9 @@ def create_presentation(filename: str, title: str, slides: list[Slide], subtitle
     if path.suffix.lower() != ".pptx":
         raise ValueError("filename must end with .pptx")
     requested = path.name
-    n = 1
-    while path.exists():  # overwriting needs human approval (Phase 9), so pick the next free name instead.
-        n += 1            # Before: the agent got "already exists" and EDITED the old plain deck instead.
-        path = path.with_name(f"{path.stem.rsplit('_', 1)[0] if n > 2 else path.stem}_{n}.pptx")
+    # Overwriting needs human approval (Phase 9), so pick the next free name instead.
+    # Before: the agent got "already exists" and EDITED the old plain deck instead.
+    path = free_path(path)
     for spec in slides:
         _check(spec)
     prs = Presentation()

@@ -27,6 +27,15 @@ def _safe_path(filename: str) -> Path:
     return path
 
 
+def free_path(path: Path) -> Path:
+    """`path`, or name_2.ext, name_3.ext ... - the first that doesn't exist yet. We never overwrite files."""
+    n, candidate = 1, path
+    while candidate.exists():
+        n += 1
+        candidate = path.with_name(f"{path.stem}_{n}{path.suffix}")
+    return candidate
+
+
 def _add_text(paragraph, text: str) -> None:
     """'a **b** c' -> runs 'a ', bold 'b', ' c' (every odd piece after splitting on ** is bold)."""
     for i, piece in enumerate(text.split("**")):

@@ -60,6 +60,16 @@ export async function downloadFile(name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Upload a document: raw bytes as the body. The server saves it in the workspace (a taken name gets _2) and,
+// for text documents, adds it to this user's RAG knowledge base. Returns {name, size, rag_chunks, rag_error}.
+export async function uploadFile(file) {
+  const res = await fetch(`${API}${fileUrl(file.name)}`, {
+    method: "PUT", headers: { "Content-Type": "application/octet-stream", ...auth() }, body: file,
+  });
+  if (!res.ok) throw await failure(res, "Upload failed");
+  return res.json();
+}
+
 // Phase 8: memory
 export const getThreads = () => json("/threads");
 export const getThread = (id) => json(`/threads/${encodeURIComponent(id)}`);

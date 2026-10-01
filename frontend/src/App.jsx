@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { downloadFile, getAgents, getPreview, getProfile, getThread, getThreads, LoggedOut, login, logout, me, register,
-  resumeTask, saveProfile, streamTask } from "./api.js";
+  resumeTask, saveProfile, streamTask, uploadFile } from "./api.js";
 
 // Fixed ring order so the constellation layout never jumps; descriptions come from GET /agents.
 const RING = [
@@ -423,6 +423,7 @@ function MissionControl({ username, onLoggedOut }) {
   const [summary, setSummary] = useState(""); // even older turns, compacted by the server into a summary
   const [drawer, setDrawer] = useState(null); // "history" | "profile" | null
   const [pending, setPending] = useState([]); // actions the paused run is waiting on (Phase 9)
+  const [attached, setAttached] = useState([]); // uploaded documents for the next request: {name, status, note}
   const lastQuestion = useRef("");
   const abort = useRef(null);
 
@@ -486,9 +487,12 @@ function MissionControl({ username, onLoggedOut }) {
     const previousQuestion = lastQuestion.current;
     if (threadId && previous) setConvo((c) => [...c, { q: previousQuestion, a: previous.text }]); // move last turn up
     lastQuestion.current = message.trim();
-    setPhase("running"); setTurn(0); setNodes({}); setLog([]); setFiles([]);
+    // Tell the agents which documents the user just provided (by their saved names, which may have gotten _2).
+    const ready = attached.filter((a) => a.status === "ok").map((a) => a.name);
+    const text = (ready.length ? `Attached documents (in my workspace): ${ready.join(", ")}.\n` : "") + message.trim();
+    setPhase("running"); setTurn(0); setNodes({}); setLog([]); setFiles([]); setAttached([]);
     try {
-      await streamTask(message.trim(), threadId, onEvent, abort.current.signal);
+      await streamTask(text, threadId, onEvent, abort.current.signal);
       setPhase((p) => (p === "running" ? "done" : p));
       setMessage(""); // ready for a follow-up
     } catch (err) {
@@ -500,6 +504,21 @@ function MissionControl({ username, onLoggedOut }) {
       }
       setPhase("error");
       settle();
+    }
+  }
+
+  async function attach(fileList) {
+    for (const file of fileList) {
+      setAttached((a) => [...a, { name: file.name, status: "uploading", note: "uploading…" }]);
+      const update = (patch) => setAttached((a) => a.map((x) => (x.name === file.name && x.status === "uploading" ? { ...x, ...patch } : x)));
+      try {
+        const r = await uploadFile(file);
+        update({ name: r.name, status: "ok", note: r.rag_error || (r.rag_chunks === null ? "saved for the agents"
+          : r.rag_chunks ? `saved · in knowledge base (${r.rag_chunks} chunk${r.rag_chunks > 1 ? "s" : ""})` : "saved · no text found for the knowledge base") });
+      } catch (err) {
+        if (err instanceof LoggedOut) return onLoggedOut();
+        update({ status: "error", note: err.message });
+      }
     }
   }
 
@@ -571,12 +590,32 @@ function MissionControl({ username, onLoggedOut }) {
       <form className="command" onSubmit={launch}>
         <div className="command-head">
           <label htmlFor="msg" className="eyebrow">{threadId ? "FOLLOW-UP (same mission, it remembers the conversation)" : "YOUR REQUEST"}</label>
-          {threadId && phase !== "running" && <button type="button" className="ghost" onClick={newMission}>✦ New mission</button>}
+          <div className="command-tools">
+            <label className={`ghost attach ${phase === "running" ? "disabled" : ""}`}
+                   title="PDF, Word, text or Markdown go into your knowledge base (RAG) too. Excel and PowerPoint are saved for the agents.">
+              📎 Add document
+              <input type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.xlsx,.pptx" disabled={phase === "running"}
+                     onChange={(e) => { attach([...e.target.files]); e.target.value = ""; }} />
+            </label>
+            {threadId && phase !== "running" && <button type="button" className="ghost" onClick={newMission}>✦ New mission</button>}
+          </div>
         </div>
         <textarea id="msg" rows={3} value={message} maxLength={4000}
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) launch(e); }}
                   placeholder={threadId ? "Ask a follow-up… e.g. “now add a slide about sick leave to that deck”" : "e.g. Create a presentation from survey_report.pdf"} />
+        {attached.length > 0 && (
+          <ul className="attached" aria-live="polite">
+            {attached.map((a, i) => (
+              <li key={i} className={a.status}>
+                <span>📄 {a.name}</span> <small>{a.note}</small>
+                {a.status !== "uploading" && (
+                  <button type="button" aria-label={`Remove ${a.name} from this request`}
+                          onClick={() => setAttached((x) => x.filter((_, j) => j !== i))}>✕</button>)}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="command-row">
           <div className="chips">
             {EXAMPLES.map((ex) => (
@@ -587,7 +626,7 @@ function MissionControl({ username, onLoggedOut }) {
           </div>
           {phase === "running"
             ? <button type="button" className="launch stop" onClick={() => abort.current?.abort()}>Stop</button>
-            : <button type="submit" className="launch" disabled={!message.trim() || phase === "awaiting"}
+            : <button type="submit" className="launch" disabled={!message.trim() || phase === "awaiting" || attached.some((a) => a.status === "uploading")}
                       title={phase === "awaiting" ? "Approve or reject the pending actions first" : undefined}>Launch ↗</button>}
         </div>
       </form>

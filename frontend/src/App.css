@@ -264,3 +264,19 @@ tbody tr:nth-child(odd) { background: #ffffff06; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (max-width: 560px) { .top { flex-direction: column; align-items: flex-start; } .launch { width: 100%; } }
+
+/* document upload */
+.command-tools { display: flex; gap: 8px; align-items: center; }
+.attach { cursor: pointer; display: inline-flex; align-items: center; }
+.attach.disabled { opacity: 0.5; pointer-events: none; }
+.attach:focus-within { outline: 2px solid var(--amber); outline-offset: 2px; }
+.attached { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.attached li { display: flex; align-items: center; gap: 6px; padding: 5px 8px 5px 10px; border-radius: 8px; font-size: 12.5px;
+               background: #ffffff10; border: 1px solid #ffffff22; max-width: 100%; }
+.attached li span { overflow-wrap: anywhere; }
+.attached small { opacity: 0.7; }
+.attached li.ok { border-color: color-mix(in srgb, var(--green) 55%, transparent); }
+.attached li.error { border-color: #f87171; }
+.attached li.error small { color: #fca5a5; opacity: 1; }
+.attached button { background: none; border: 0; color: inherit; cursor: pointer; opacity: 0.7; padding: 0 2px; font-size: 12px; }
+.attached button:hover, .attached button:focus-visible { opacity: 1; }

@@ -11,20 +11,23 @@ Test:  .venv/Scripts/python api_test.py
 import json
 import sys
 import uuid
+from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
-from agents.document import _safe_path
+from agents.document import _safe_path, free_path
+from agents.rag import RAG_TYPES, index_file
 from auth import AuthError, login, logout, register, user_for_token
 from memory import get_profile, list_threads, save_profile, thread_owner, touch_thread
 from orchestrator import (AGENTS, graph, invoke_traced, new_request, thread_config, traced_stream,
                           waiting_for_approval)
-from previews import changed_since, preview, snapshot
+from previews import changed_since, is_user_file, preview, snapshot
 from userdata import as_user
 
 # Agents print() LLM text for logging. On Windows the server's console is cp1252, so one "↑" in an answer
@@ -299,6 +302,52 @@ def _preview(name: str):
     except Exception as e:  # corrupt/locked file. An unhandled 500 skips the CORS middleware, and the browser
         # then only reports "Failed to fetch" - so turn it into a normal, readable HTTP error.
         raise HTTPException(status_code=422, detail=f"Can't read this file ({type(e).__name__}).") from e
+
+
+# --- UPLOADS: the user provides a document -> workspace (every agent can use it) + their own RAG index ---
+UPLOAD_TYPES = {".pdf", ".docx", ".txt", ".md", ".xlsx", ".pptx"}
+MAX_UPLOAD = 20 * 1024 * 1024  # 20 MB
+MAGIC = {".pdf": b"%PDF", ".docx": b"PK", ".xlsx": b"PK", ".pptx": b"PK"}  # Office files are zip archives
+
+
+@app.put("/files/{name}", status_code=201)
+async def upload_file(name: str, request: Request, user: str = Depends(current_user)):
+    """Raw file bytes as the body (no multipart, so no extra dependency). Never overwrites: a taken name gets _2."""
+    suffix = Path(name).suffix.lower()
+    if suffix not in UPLOAD_TYPES or not is_user_file(name):
+        raise HTTPException(status_code=400, detail=f"Allowed types: {', '.join(sorted(UPLOAD_TYPES))}.")
+    data = bytearray()
+    async for part in request.stream():  # count while reading: a lying or missing Content-Length can't exhaust memory
+        data += part
+        if len(data) > MAX_UPLOAD:
+            raise HTTPException(status_code=413, detail="File is larger than 20 MB.")
+    if not data:
+        raise HTTPException(status_code=400, detail="The file is empty.")
+    if suffix in MAGIC and not data.startswith(MAGIC[suffix]):
+        raise HTTPException(status_code=415, detail=f"This doesn't look like a real {suffix} file.")
+    if suffix in (".txt", ".md"):
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise HTTPException(status_code=415, detail="Text files must be UTF-8.") from e
+    return await run_in_threadpool(_store_upload, user, name, bytes(data))  # file + embedding calls block
+
+
+def _store_upload(user: str, name: str, data: bytes) -> dict:
+    with as_user(user):  # this user's workspace and RAG index
+        try:
+            path = free_path(_safe_path(name))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        path.write_bytes(data)
+        result = {"name": path.name, "size": len(data), "rag_chunks": None, "rag_error": ""}
+        if path.suffix.lower() in RAG_TYPES:
+            try:
+                result["rag_chunks"] = index_file(path.name)
+            except Exception as e:  # noqa: BLE001 - the file is saved either way; only the index failed
+                print(f"[upload] indexing {path.name} failed: {type(e).__name__}: {e}")
+                result["rag_error"] = "Saved, but couldn't add it to the knowledge base right now (try again later)."
+        return result
 
 
 @app.get("/files/{name}")
